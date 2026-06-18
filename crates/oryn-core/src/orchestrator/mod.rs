@@ -17,6 +17,7 @@ pub mod capability;
 pub mod catalog;
 pub mod cost;
 pub mod discovery;
+pub mod harness;
 pub mod prefix;
 pub mod provider;
 pub mod scheduler;
