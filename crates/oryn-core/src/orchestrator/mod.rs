@@ -13,6 +13,7 @@
 //! Later modules in this crate extend the pipeline with scheduling, agent
 //! selection, budget enforcement, and result aggregation.
 
+pub mod advisor;
 pub mod capability;
 pub mod catalog;
 pub mod cost;
