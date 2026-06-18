@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 mod colors;
+mod launcher;
 mod mission;
 mod theme;
 
@@ -20,8 +21,38 @@ use gpui::{
 };
 
 use colors::{overlay, solid, tint};
+use launcher::Adapter;
 use mission::AgentRun;
 use theme::{ACCENTS, Mode, Theme};
+
+/// A simple view header: an uppercase kicker over a large title. Shared by the
+/// screens whose design uses this pattern (Launcher, Settings, …).
+pub(crate) fn view_header(t: &Theme, kicker: &'static str, title: &'static str) -> impl IntoElement {
+    div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .px(px(24.0))
+        .pt(px(18.0))
+        .pb(px(14.0))
+        .border_b_1()
+        .border_color(overlay(t.overlays.w06))
+        .child(
+            div()
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(kicker),
+        )
+        .child(
+            div()
+                .text_size(px(21.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t1))
+                .child(title),
+        )
+}
 
 /// Which primary view is active in the main area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +70,7 @@ struct Root {
     theme: Theme,
     screen: Screen,
     agents: Vec<AgentRun>,
+    adapters: Vec<Adapter>,
 }
 
 impl Root {
@@ -47,6 +79,7 @@ impl Root {
             theme: Theme::resolve(Mode::Dark, ACCENTS[0]),
             screen: Screen::Mission,
             agents: AgentRun::sample(),
+            adapters: Adapter::available(),
         }
     }
 
@@ -254,6 +287,7 @@ impl Root {
             .bg(solid(t.surfaces.bg))
             .child(match self.screen {
                 Screen::Mission => mission::mission_control_any(t, &self.agents),
+                Screen::Launch => launcher::launcher_any(t, &self.adapters),
                 other => self.placeholder(other),
             })
     }
