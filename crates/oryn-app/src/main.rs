@@ -30,7 +30,7 @@ use gpui::{
     WindowBounds, WindowOptions, div, px, size,
 };
 
-use backend::{LiveReport, RepoInfo};
+use backend::{LiveReport, RepoInfo, UserIdentity};
 use colors::{overlay, solid};
 use launcher::Adapter;
 use mission::fmt_usd;
@@ -99,6 +99,8 @@ pub struct Root {
     pub promoted: Option<usize>,
     /// The git repository the app was launched in (real).
     pub repo: RepoInfo,
+    /// The local developer identity (git config / OS user).
+    pub identity: UserIdentity,
     /// The editable task description that becomes the mission goal.
     pub task: String,
     /// Focus handle for the task editor (None in headless tests).
@@ -163,6 +165,8 @@ impl Root {
     /// Construct the app without async tasks — used by unit tests and as the
     /// instant, network-free startup state. Repo is detected from the cwd.
     pub fn headless() -> Self {
+        let repo = RepoInfo::detect();
+        let identity = UserIdentity::detect(&repo.root);
         Self {
             settings: Settings::default(),
             screen: Screen::Mission,
@@ -170,7 +174,8 @@ impl Root {
             adapters: Adapter::available(),
             selected: 0,
             promoted: None,
-            repo: RepoInfo::detect(),
+            repo,
+            identity,
             task: DEFAULT_TASK.to_string(),
             task_focus: None,
             phase: Phase::Idle,

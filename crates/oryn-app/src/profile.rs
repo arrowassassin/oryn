@@ -37,8 +37,8 @@ impl Root {
                             .flex()
                             .flex_col()
                             .gap(px(16.0))
-                            .child(identity_card(&t))
-                            .child(workspace_card(&t))
+                            .child(self.identity_card(&t))
+                            .child(self.workspace_card(&t))
                             .child(self.preferences_card(&t)),
                     ),
             )
@@ -92,73 +92,93 @@ impl Root {
                 )),
         )
     }
-}
 
-fn identity_card(t: &Theme) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(16.0))
-        .bg(solid(t.surfaces.panel))
-        .border_1()
-        .border_color(overlay(t.overlays.w07))
-        .rounded(px(13.0))
-        .p(px(18.0))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(54.0))
-                .rounded_full()
-                .bg(tint(t.accent.base, 0.18))
-                .border_1()
-                .border_color(tint(t.accent.base, 0.4))
-                .text_size(px(16.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(solid(t.accent.base))
-                .child("AK"),
-        )
-        .child(
+    fn identity_card(&self, t: &Theme) -> impl IntoElement {
+        let id = &self.identity;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(16.0))
+            .bg(solid(t.surfaces.panel))
+            .border_1()
+            .border_color(overlay(t.overlays.w07))
+            .rounded(px(13.0))
+            .p(px(18.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(54.0))
+                    .rounded_full()
+                    .bg(tint(t.accent.base, 0.18))
+                    .border_1()
+                    .border_color(tint(t.accent.base, 0.4))
+                    .text_size(px(16.0))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(solid(t.accent.base))
+                    .child(id.initials.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.0))
+                    .child(
+                        div()
+                            .text_size(px(17.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(solid(t.text.t1))
+                            .child(id.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(solid(t.text.t3))
+                            .child(id.email.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(7.0))
+                            .mt(px(5.0))
+                            .child(badge("LOCAL", t.accent.base))
+                            .child(badge_str(self.repo.label.clone(), t.text.t3)),
+                    ),
+            )
+    }
+
+    fn workspace_card(&self, t: &Theme) -> impl IntoElement {
+        let frameworks = self.adapters.iter().filter(|a| a.enabled).count();
+        card(
+            t,
+            "WORKSPACE",
             div()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
+                .gap(px(14.0))
                 .child(
                     div()
-                        .text_size(px(17.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(solid(t.text.t1))
-                        .child("Ada Keller"),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.5))
-                        .text_color(solid(t.text.t3))
-                        .child("ada@acme.dev"),
+                        .flex()
+                        .gap(px(20.0))
+                        .child(field(t, "Repository", self.repo.label.clone()))
+                        .child(field(t, "Base", self.repo.base_ref()))
+                        .child(field(t, "Frameworks", format!("{frameworks} selected"))),
                 )
                 .child(
                     div()
                         .flex()
-                        .gap(px(7.0))
-                        .mt(px(5.0))
-                        .child(badge("MAINTAINER", t.accent.base))
-                        .child(badge("acme", t.text.t3)),
+                        .gap(px(20.0))
+                        .child(field(t, "Advisor", self.advisor.model.clone()))
+                        .child(field(t, "Endpoint", self.advisor.endpoint.clone()))
+                        .child(field(
+                            t,
+                            "Worktrees",
+                            crate::backend::worktree_base_display(),
+                        )),
                 ),
         )
-}
-
-fn workspace_card(t: &Theme) -> impl IntoElement {
-    card(
-        t,
-        "WORKSPACE",
-        div()
-            .flex()
-            .gap(px(20.0))
-            .child(field(t, "Organization", "acme"))
-            .child(field(t, "Plan", "Team · active"))
-            .child(field(t, "Worktrees", "~/.oryn/worktrees")),
-    )
+    }
 }
 
 fn card(t: &Theme, title: &'static str, body: impl IntoElement) -> impl IntoElement {
@@ -182,12 +202,13 @@ fn card(t: &Theme, title: &'static str, body: impl IntoElement) -> impl IntoElem
         .child(body)
 }
 
-fn field(t: &Theme, label: &'static str, value: &'static str) -> impl IntoElement {
+fn field(t: &Theme, label: &'static str, value: String) -> impl IntoElement {
     div()
         .flex_1()
         .flex()
         .flex_col()
         .gap(px(5.0))
+        .min_w(px(0.0))
         .child(
             div()
                 .text_size(px(9.5))
@@ -197,6 +218,7 @@ fn field(t: &Theme, label: &'static str, value: &'static str) -> impl IntoElemen
         )
         .child(
             div()
+                .overflow_hidden()
                 .text_size(px(13.0))
                 .text_color(solid(t.text.t1))
                 .child(value),
@@ -226,6 +248,10 @@ fn pref_row(t: &Theme, label: &'static str, value: String) -> impl IntoElement {
 }
 
 fn badge(label: &'static str, hue: crate::theme::Rgb) -> impl IntoElement {
+    badge_str(label.to_string(), hue)
+}
+
+fn badge_str(label: String, hue: crate::theme::Rgb) -> impl IntoElement {
     div()
         .px(px(8.0))
         .py(px(2.0))

@@ -475,6 +475,95 @@ fn probe_advisor(endpoint: &str, model: &str) -> String {
     }
 }
 
+// ── user identity ─────────────────────────────────────────────────────────────
+
+/// The local developer identity, read from real sources: the repo's git config,
+/// then the global `~/.gitconfig`, then the OS user. No invented account data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserIdentity {
+    pub name: String,
+    pub email: String,
+    /// Up-to-two-letter initials for the avatar.
+    pub initials: String,
+}
+
+impl UserIdentity {
+    /// Detect the identity for the repository at `repo_root`.
+    pub fn detect(repo_root: &std::path::Path) -> Self {
+        let (mut name, mut email) = git_user(&repo_root.join(".git").join("config"));
+        if name.is_none() || email.is_none() {
+            let home = std::env::var("HOME").unwrap_or_default();
+            let (gn, ge) = git_user(&PathBuf::from(home).join(".gitconfig"));
+            name = name.or(gn);
+            email = email.or(ge);
+        }
+        let os_user = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "developer".into());
+        let name = name.unwrap_or_else(|| os_user.clone());
+        let email = email.unwrap_or_else(|| format!("{os_user}@localhost"));
+        let initials = initials_of(&name);
+        Self {
+            name,
+            email,
+            initials,
+        }
+    }
+}
+
+/// Parse `name`/`email` from the `[user]` section of a git-config-format file.
+fn git_user(path: &std::path::Path) -> (Option<String>, Option<String>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
+    };
+    let mut in_user = false;
+    let (mut name, mut email) = (None, None);
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_user = line.starts_with("[user");
+            continue;
+        }
+        if !in_user {
+            continue;
+        }
+        if let Some(v) = line
+            .strip_prefix("name")
+            .and_then(|r| r.trim_start().strip_prefix('='))
+        {
+            name = Some(v.trim().trim_matches('"').to_string());
+        } else if let Some(v) = line
+            .strip_prefix("email")
+            .and_then(|r| r.trim_start().strip_prefix('='))
+        {
+            email = Some(v.trim().trim_matches('"').to_string());
+        }
+    }
+    (
+        name.filter(|s| !s.is_empty()),
+        email.filter(|s| !s.is_empty()),
+    )
+}
+
+/// Initials from a display name: first letters of the first two words, uppercased.
+fn initials_of(name: &str) -> String {
+    let mut out = String::new();
+    for word in name.split_whitespace().take(2) {
+        if let Some(c) = word.chars().next() {
+            out.extend(c.to_uppercase());
+        }
+    }
+    if out.is_empty() {
+        out.push('?');
+    }
+    out
+}
+
+/// Human-readable worktree base directory (`ORYN_WORKTREE_BASE` or the default).
+pub fn worktree_base_display() -> String {
+    worktree_base().display().to_string()
+}
+
 // ── repository detection ──────────────────────────────────────────────────────
 
 /// Real, dependency-free snapshot of the git repository the app is launched in:
@@ -814,6 +903,31 @@ mod tests {
         // Repo detection produced a real label + base ref.
         assert!(!report.repo_label.is_empty());
         assert!(report.advisor.contains("qwen2.5-coder:7b"));
+    }
+
+    #[test]
+    fn git_user_parsed_from_config_and_initials() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::write(
+            dir.path().join(".git").join("config"),
+            "[core]\n\trepositoryformatversion = 0\n[user]\n\tname = Ada Lovelace\n\temail = ada@example.com\n",
+        )
+        .unwrap();
+        let id = UserIdentity::detect(dir.path());
+        assert_eq!(id.name, "Ada Lovelace");
+        assert_eq!(id.email, "ada@example.com");
+        assert_eq!(id.initials, "AL");
+    }
+
+    #[test]
+    fn identity_falls_back_without_git_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = UserIdentity::detect(dir.path());
+        // Falls back to OS user; never empty.
+        assert!(!id.name.is_empty());
+        assert!(!id.email.is_empty());
+        assert!(!id.initials.is_empty());
     }
 
     #[test]
