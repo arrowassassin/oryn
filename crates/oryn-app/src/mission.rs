@@ -162,8 +162,8 @@ impl Root {
                             ),
                     )
                     .child(div().flex_1())
-                    .child(
-                        div()
+                    .child({
+                        let base = div()
                             .id("rerun")
                             .flex()
                             .items_center()
@@ -176,15 +176,18 @@ impl Root {
                             .border_color(overlay(t.overlays.w09))
                             .text_size(px(12.0))
                             .text_color(solid(t.text.t2))
-                            .cursor_pointer()
-                            .on_click(self.launch_run(cx))
-                            .child(div().size(px(8.0)).rounded(px(2.0)).bg(solid(if running {
-                                t.status.amber
-                            } else {
-                                t.text.t3
-                            })))
-                            .child(if running { "Running…" } else { "Re-run" }),
-                    )
+                            .cursor_pointer();
+                        if running {
+                            // While a run is in flight, the button cancels it.
+                            base.on_click(self.cancel_run_btn(cx))
+                                .child(div().size(px(8.0)).rounded(px(2.0)).bg(solid(t.status.red)))
+                                .child("Cancel")
+                        } else {
+                            base.on_click(self.launch_run(cx))
+                                .child(div().size(px(8.0)).rounded(px(2.0)).bg(solid(t.text.t3)))
+                                .child("Re-run")
+                        }
+                    })
                     .child(
                         div()
                             .id("compare")

@@ -15,6 +15,7 @@ mod broker;
 mod colors;
 mod launcher;
 mod mission;
+mod palette;
 mod profile;
 mod review;
 mod settings;
@@ -107,6 +108,14 @@ pub struct Root {
     pub task_cursor: usize,
     /// Focus handle for the task editor (None in headless tests).
     pub task_focus: Option<FocusHandle>,
+    /// Whether the command palette overlay is open.
+    pub palette_open: bool,
+    /// The palette's filter query.
+    pub palette_query: String,
+    /// Index of the highlighted palette command (within the filtered list).
+    pub palette_sel: usize,
+    /// Focus handle for the palette input.
+    pub palette_focus: Option<FocusHandle>,
     /// Lifecycle of the current run.
     pub phase: Phase,
     /// The last real engine result.
@@ -160,6 +169,7 @@ impl Root {
             root.apply_config(cfg);
         }
         root.task_focus = Some(cx.focus_handle());
+        root.palette_focus = Some(cx.focus_handle());
         root._catalog_timer = Some(catalog_timer);
         root
     }
@@ -183,6 +193,10 @@ impl Root {
             task: DEFAULT_TASK.to_string(),
             task_cursor: DEFAULT_TASK.len(),
             task_focus: None,
+            palette_open: false,
+            palette_query: String::new(),
+            palette_sel: 0,
+            palette_focus: None,
             phase: Phase::Idle,
             report: None,
             run_note: String::new(),
@@ -203,38 +217,64 @@ impl Root {
         &self,
         cx: &mut Context<Self>,
     ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
-        cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-            if this.phase == Phase::Running {
-                return;
-            }
-            this.phase = Phase::Running;
-            this.run_note = "running — discovering models and routing subtasks".into();
-            this.agents.clear();
-            this.report = None;
-            this.promoted = None;
-            this.screen = Screen::Mission;
-            cx.notify();
+        cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| this.begin_run(cx))
+    }
 
-            let adapters = this.adapters.clone();
-            let endpoint = this.advisor.endpoint.clone();
-            let model = this.advisor.model.clone();
-            let bundle = this.catalog.clone();
-            let repo = this.repo.clone();
-            let task = this.task.clone();
+    /// Snapshot the current inputs and spawn the real engine run on a background
+    /// thread, flipping to the Running phase. No-op while a run is in flight.
+    pub fn begin_run(&mut self, cx: &mut Context<Self>) {
+        if self.phase == Phase::Running {
+            return;
+        }
+        self.phase = Phase::Running;
+        self.run_note = "running — discovering models and routing subtasks".into();
+        self.agents.clear();
+        self.report = None;
+        self.promoted = None;
+        self.screen = Screen::Mission;
+        cx.notify();
 
-            let task_handle = cx.spawn(async move |weak, cx| {
-                let report = cx
-                    .background_executor()
-                    .spawn(async move {
-                        backend::run_live(&adapters, &endpoint, &model, &bundle, &repo, &task)
-                    })
-                    .await;
-                let _ = weak.update(cx, |this, cx| {
-                    this.ingest_report(report);
-                    cx.notify();
-                });
+        let adapters = self.adapters.clone();
+        let endpoint = self.advisor.endpoint.clone();
+        let model = self.advisor.model.clone();
+        let bundle = self.catalog.clone();
+        let repo = self.repo.clone();
+        let task = self.task.clone();
+
+        let task_handle = cx.spawn(async move |weak, cx| {
+            let report = cx
+                .background_executor()
+                .spawn(async move {
+                    backend::run_live(&adapters, &endpoint, &model, &bundle, &repo, &task)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                this.ingest_report(report);
+                cx.notify();
             });
-            this._run = Some(task_handle);
+        });
+        self._run = Some(task_handle);
+    }
+
+    /// Cancel an in-flight run: dropping the task handle detaches the background
+    /// work so its result is ignored, and the UI returns to a settled state.
+    pub fn cancel_run(&mut self) {
+        if self.phase != Phase::Running {
+            return;
+        }
+        self._run = None;
+        self.phase = Phase::Failed;
+        self.run_note = "run cancelled".into();
+    }
+
+    /// Click handler that cancels the in-flight run.
+    pub fn cancel_run_btn(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
+        cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+            this.cancel_run();
+            cx.notify();
         })
     }
 
@@ -488,6 +528,40 @@ impl Root {
             .child(div().flex_1())
             .child(
                 div()
+                    .id("palette-open")
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .h(px(30.0))
+                    .min_w(px(220.0))
+                    .pl(px(12.0))
+                    .pr(px(10.0))
+                    .rounded(px(8.0))
+                    .bg(overlay(t.overlays.w04))
+                    .border_1()
+                    .border_color(overlay(t.overlays.w08))
+                    .cursor_pointer()
+                    .on_click(self.open_palette(cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(12.0))
+                            .text_color(solid(t.text.t3))
+                            .child("Search commands…"),
+                    )
+                    .child(
+                        div()
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(5.0))
+                            .bg(overlay(t.overlays.w07))
+                            .text_size(px(10.5))
+                            .text_color(solid(t.text.t3))
+                            .child("⌘K"),
+                    ),
+            )
+            .child(
+                div()
                     .flex()
                     .items_center()
                     .gap(px(7.0))
@@ -663,14 +737,18 @@ impl Render for Root {
         if let Some(font) = self.settings.font_family() {
             root = root.font_family(font);
         }
-        root.child(self.top_bar(cx)).child(
+        let mut root = root.relative().child(self.top_bar(cx)).child(
             div()
                 .flex_1()
                 .flex()
                 .min_h(px(0.0))
                 .child(self.left_rail(cx))
                 .child(self.main_area(cx)),
-        )
+        );
+        if self.palette_open {
+            root = root.child(self.palette_overlay(cx));
+        }
+        root
     }
 }
 
