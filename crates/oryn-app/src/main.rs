@@ -15,10 +15,10 @@ mod mission;
 mod settings;
 mod theme;
 
-use gpui::prelude::FluentBuilder;
+use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, AppContext, Application, Bounds, Context, FontWeight, IntoElement,
-    ParentElement, Render, Styled, Window, WindowBounds, WindowOptions, div, px, size,
+    AnyElement, App, Application, Bounds, Context, FontWeight, Window, WindowBounds, WindowOptions,
+    div, px, size,
 };
 
 use colors::{overlay, solid, tint};
@@ -208,7 +208,12 @@ impl Root {
             )
     }
 
-    fn nav_item(&self, screen: Screen, label: &'static str) -> impl IntoElement {
+    fn nav_item(
+        &self,
+        cx: &mut Context<Self>,
+        screen: Screen,
+        label: &'static str,
+    ) -> impl IntoElement {
         let t = &self.theme;
         let active = self.screen == screen;
         let icon_color = if active {
@@ -222,6 +227,7 @@ impl Root {
             solid(t.text.t5)
         };
         div()
+            .id(label)
             .relative()
             .flex()
             .flex_col()
@@ -231,6 +237,11 @@ impl Root {
             .w(px(50.0))
             .py(px(8.0))
             .rounded(px(9.0))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.screen = screen;
+                cx.notify();
+            }))
             .when(active, |d| d.bg(overlay(t.overlays.w05)))
             // active accent bar
             .when(active, |d| {
@@ -254,7 +265,7 @@ impl Root {
             )
     }
 
-    fn left_rail(&self) -> impl IntoElement {
+    fn left_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = &self.theme;
         div()
             .flex()
@@ -267,15 +278,15 @@ impl Root {
             .bg(solid(t.surfaces.bg2))
             .border_r_1()
             .border_color(overlay(t.overlays.w07))
-            .child(self.nav_item(Screen::Mission, "Mission"))
-            .child(self.nav_item(Screen::Timeline, "Timeline"))
-            .child(self.nav_item(Screen::Review, "Review"))
-            .child(self.nav_item(Screen::Broker, "Broker"))
+            .child(self.nav_item(cx, Screen::Mission, "Mission"))
+            .child(self.nav_item(cx, Screen::Timeline, "Timeline"))
+            .child(self.nav_item(cx, Screen::Review, "Review"))
+            .child(self.nav_item(cx, Screen::Broker, "Broker"))
             .child(div().flex_1())
-            .child(self.nav_item(Screen::Launch, "Launch"))
+            .child(self.nav_item(cx, Screen::Launch, "Launch"))
             .child(div().w(px(30.0)).h(px(1.0)).my(px(6.0)).bg(overlay(t.overlays.w08)))
-            .child(self.nav_item(Screen::Settings, "Settings"))
-            .child(self.nav_item(Screen::Profile, "You"))
+            .child(self.nav_item(cx, Screen::Settings, "Settings"))
+            .child(self.nav_item(cx, Screen::Profile, "You"))
     }
 
     fn main_area(&self) -> impl IntoElement {
@@ -328,8 +339,7 @@ impl Root {
 }
 
 impl Render for Root {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let _ = self.screen;
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -342,7 +352,7 @@ impl Render for Root {
                     .flex_1()
                     .flex()
                     .min_h(px(0.0))
-                    .child(self.left_rail())
+                    .child(self.left_rail(cx))
                     .child(self.main_area()),
             )
     }
