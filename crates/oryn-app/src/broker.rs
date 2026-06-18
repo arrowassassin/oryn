@@ -37,16 +37,38 @@ impl Root {
         let stats = div()
             .flex()
             .gap(px(14.0))
-            .child(stat_card(&t, "Prefix files", &files.to_string(), "shared, content-addressed", t.text.t1))
-            .child(stat_card(&t, "Tokens routed", &crate::mission::fmt_k(tokens), &format!("${gross:.2} gross spend"), t.text.t1))
-            .child(stat_card(&t, "Cache savings", &format!("${saved:.2}"), &format!("{frac:.0}% off the no-cache baseline"), t.status.green));
+            .child(stat_card(
+                &t,
+                "Prefix files",
+                &files.to_string(),
+                "shared, content-addressed",
+                t.text.t1,
+            ))
+            .child(stat_card(
+                &t,
+                "Tokens routed",
+                &crate::mission::fmt_k(tokens),
+                &format!("${gross:.2} gross spend"),
+                t.text.t1,
+            ))
+            .child(stat_card(
+                &t,
+                "Cache savings",
+                &format!("${saved:.2}"),
+                &format!("{frac:.0}% off the no-cache baseline"),
+                t.status.green,
+            ));
 
         div()
             .flex_1()
             .flex()
             .flex_col()
             .min_h(px(0.0))
-            .child(crate::view_header(&t, "CONTEXT BROKER · M2", "Shared, deduplicated context"))
+            .child(crate::view_header(
+                &t,
+                "CONTEXT BROKER · M2",
+                "Shared, deduplicated context",
+            ))
             .child(
                 div()
                     .flex_1()
@@ -65,7 +87,13 @@ impl Root {
     }
 }
 
-fn stat_card(t: &Theme, label: &'static str, value: &str, sub: &str, value_color: Rgb) -> impl IntoElement {
+fn stat_card(
+    t: &Theme,
+    label: &'static str,
+    value: &str,
+    sub: &str,
+    value_color: Rgb,
+) -> impl IntoElement {
     div()
         .flex_1()
         .flex()
@@ -75,9 +103,28 @@ fn stat_card(t: &Theme, label: &'static str, value: &str, sub: &str, value_color
         .border_color(overlay(t.overlays.w07))
         .rounded(px(12.0))
         .p(px(16.0))
-        .child(div().mb(px(10.0)).text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(label))
-        .child(div().text_size(px(26.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(value_color)).child(value.to_string()))
-        .child(div().mt(px(4.0)).text_size(px(11.0)).text_color(solid(t.text.t5)).child(sub.to_string()))
+        .child(
+            div()
+                .mb(px(10.0))
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(26.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(value_color))
+                .child(value.to_string()),
+        )
+        .child(
+            div()
+                .mt(px(4.0))
+                .text_size(px(11.0))
+                .text_color(solid(t.text.t5))
+                .child(sub.to_string()),
+        )
 }
 
 fn explainer(t: &Theme) -> impl IntoElement {
@@ -97,7 +144,11 @@ fn explainer(t: &Theme) -> impl IntoElement {
 fn prefix_panel(t: &Theme) -> impl IntoElement {
     let rows = [
         ("system", "persona · capabilities · guardrails", "cached"),
-        ("repo_map", "sorted file index · stable across the race", "cached"),
+        (
+            "repo_map",
+            "sorted file index · stable across the race",
+            "cached",
+        ),
         ("task", "mission goal · acceptance criteria", "cached"),
         ("suffix", "per-subtask instruction", "volatile"),
     ];
@@ -110,10 +161,21 @@ fn prefix_panel(t: &Theme) -> impl IntoElement {
         .rounded(px(12.0))
         .px(px(16.0))
         .py(px(14.0))
-        .child(div().mb(px(10.0)).text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child("CACHE-STABLE PREFIX"))
+        .child(
+            div()
+                .mb(px(10.0))
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child("CACHE-STABLE PREFIX"),
+        )
         .children(rows.into_iter().map(|(name, desc, tag)| {
             let cached = tag == "cached";
-            let tag_color = if cached { t.status.green } else { t.status.amber };
+            let tag_color = if cached {
+                t.status.green
+            } else {
+                t.status.amber
+            };
             div()
                 .flex()
                 .items_center()
@@ -121,8 +183,22 @@ fn prefix_panel(t: &Theme) -> impl IntoElement {
                 .py(px(9.0))
                 .border_t_1()
                 .border_color(overlay(t.overlays.w04))
-                .child(div().w(px(76.0)).flex_none().text_size(px(12.0)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child(name))
-                .child(div().flex_1().text_size(px(11.5)).text_color(solid(t.text.t4)).child(desc))
+                .child(
+                    div()
+                        .w(px(76.0))
+                        .flex_none()
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(solid(t.text.t1))
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(11.5))
+                        .text_color(solid(t.text.t4))
+                        .child(desc),
+                )
                 .child(
                     div()
                         .px(px(8.0))

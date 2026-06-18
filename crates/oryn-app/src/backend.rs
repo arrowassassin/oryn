@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oryn_core::orchestrator::advisor::{Http, HttpError, LocalAdvisor, OllamaAdvisor};
 use oryn_core::orchestrator::artificial_analysis::{aa_weights, parse_aa};
+use oryn_core::orchestrator::capability::CapabilityProfile;
 use oryn_core::orchestrator::catalog::{
     CapabilityCatalog, CapabilitySource, CatalogProvenance, RawBenchmarks, SourceError,
     default_weights, parse_aider_leaderboard,
@@ -18,10 +19,11 @@ use oryn_core::orchestrator::catalog::{
 use oryn_core::orchestrator::catalog_store::{
     CatalogBundle, RefreshPolicy, Store, StoreError, load_and_maybe_refresh,
 };
-use oryn_core::orchestrator::capability::CapabilityProfile;
 use oryn_core::orchestrator::engine::{AdvisorConfig, Engine, EngineConfig};
 use oryn_core::orchestrator::harness::{AuthMode, HarnessInvocation};
-use oryn_core::orchestrator::listing::{ListCommand, build_targets, default_list_command, parse_model_list};
+use oryn_core::orchestrator::listing::{
+    ListCommand, build_targets, default_list_command, parse_model_list,
+};
 use oryn_core::orchestrator::pricing::{PricingSource, PricingTable, parse_openrouter_models};
 use oryn_core::orchestrator::provider::{AgentFramework, ModelId, ModelSpec};
 use oryn_core::orchestrator::runner::{ProcessRunner, SystemProcessRunner};
@@ -37,7 +39,10 @@ const DISCOVERY_BASELINE: f64 = 0.6;
 
 /// Current wall-clock seconds since the epoch (the clock lives in the I/O layer).
 pub fn now_unix() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // ── advisor transport ───────────────────────────────────────────────────────
@@ -47,7 +52,10 @@ pub struct UreqHttp;
 
 impl Http for UreqHttp {
     fn post_json(&self, url: &str, body: &str) -> Result<String, HttpError> {
-        match ureq::post(url).set("Content-Type", "application/json").send_string(body) {
+        match ureq::post(url)
+            .set("Content-Type", "application/json")
+            .send_string(body)
+        {
             Ok(resp) => resp.into_string().map_err(|_| HttpError::Unreachable),
             Err(ureq::Error::Status(code, _)) => Err(HttpError::Status(code)),
             Err(_) => Err(HttpError::Unreachable),
@@ -58,7 +66,9 @@ impl Http for UreqHttp {
 /// Blocking HTTP GET, returning the body or a [`SourceError`].
 fn http_get(url: &str) -> Result<String, SourceError> {
     match ureq::get(url).call() {
-        Ok(resp) => resp.into_string().map_err(|e| SourceError::Malformed(e.to_string())),
+        Ok(resp) => resp
+            .into_string()
+            .map_err(|e| SourceError::Malformed(e.to_string())),
         Err(_) => Err(SourceError::Unavailable),
     }
 }
@@ -73,10 +83,12 @@ pub struct FsStore {
 impl FsStore {
     /// Store at `ORYN_CATALOG_PATH`, else `~/.oryn/catalog.json`.
     pub fn from_env() -> Self {
-        let path = std::env::var("ORYN_CATALOG_PATH").map(PathBuf::from).unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(home).join(".oryn").join("catalog.json")
-        });
+        let path = std::env::var("ORYN_CATALOG_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                PathBuf::from(home).join(".oryn").join("catalog.json")
+            });
         Self { path }
     }
 }
@@ -116,7 +128,11 @@ impl PricingSource for OpenRouterPricing {
         let prices = parse_openrouter_models(&body)?;
         Ok(PricingTable {
             prices,
-            provenance: CatalogProvenance { source: "openrouter".into(), fetched_at_unix: now_unix, version: "v1".into() },
+            provenance: CatalogProvenance {
+                source: "openrouter".into(),
+                fetched_at_unix: now_unix,
+                version: "v1".into(),
+            },
         })
     }
 }
@@ -153,7 +169,9 @@ fn http_get_key(url: &str, key: Option<&str>) -> Result<String, SourceError> {
         req = req.set("x-api-key", k);
     }
     match req.call() {
-        Ok(resp) => resp.into_string().map_err(|e| SourceError::Malformed(e.to_string())),
+        Ok(resp) => resp
+            .into_string()
+            .map_err(|e| SourceError::Malformed(e.to_string())),
         Err(_) => Err(SourceError::Unavailable),
     }
 }
@@ -171,7 +189,9 @@ impl ArtificialAnalysis {
     /// Configured from `ARTIFICIALANALYSIS_API_KEY` (+ optional `ORYN_AA_URL`).
     /// Returns `None` when no key is set.
     pub fn from_env() -> Option<Self> {
-        let key = std::env::var("ARTIFICIALANALYSIS_API_KEY").ok().filter(|s| !s.is_empty())?;
+        let key = std::env::var("ARTIFICIALANALYSIS_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())?;
         let url = std::env::var("ORYN_AA_URL")
             .unwrap_or_else(|_| "https://artificialanalysis.ai/api/v2/data/llms/models".into());
         Some(Self { url, key })
@@ -187,7 +207,11 @@ impl PricingSource for ArtificialAnalysis {
         let aa = parse_aa(&body)?;
         Ok(PricingTable {
             prices: aa.prices,
-            provenance: CatalogProvenance { source: "artificial-analysis".into(), fetched_at_unix: now_unix, version: "v2".into() },
+            provenance: CatalogProvenance {
+                source: "artificial-analysis".into(),
+                fetched_at_unix: now_unix,
+                version: "v2".into(),
+            },
         })
     }
 }
@@ -205,7 +229,10 @@ impl CapabilitySource for ArtificialAnalysis {
 /// How often (seconds) to consider the parked catalog stale (`ORYN_REFRESH_SECS`,
 /// default 24h).
 fn refresh_policy() -> RefreshPolicy {
-    let secs = std::env::var("ORYN_REFRESH_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(24 * 60 * 60);
+    let secs = std::env::var("ORYN_REFRESH_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(24 * 60 * 60);
     RefreshPolicy::new(secs)
 }
 
@@ -248,7 +275,10 @@ pub fn verify_source(source: CatalogSource) -> String {
         CatalogSource::ArtificialAnalysis => match ArtificialAnalysis::from_env() {
             None => "Artificial Analysis: no ARTIFICIALANALYSIS_API_KEY set".to_string(),
             Some(aa) => match PricingSource::fetch(&aa, now) {
-                Ok(table) => format!("AA key OK · {} models priced + benchmarked", table.prices.len()),
+                Ok(table) => format!(
+                    "AA key OK · {} models priced + benchmarked",
+                    table.prices.len()
+                ),
                 Err(e) => format!("AA error (check key/host): {e}"),
             },
         },
@@ -272,7 +302,9 @@ pub fn verify_source(source: CatalogSource) -> String {
 
 /// The worktree base directory, from `ORYN_WORKTREE_BASE` or a default.
 fn worktree_base() -> PathBuf {
-    std::env::var("ORYN_WORKTREE_BASE").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(".oryn/worktrees"))
+    std::env::var("ORYN_WORKTREE_BASE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(".oryn/worktrees"))
 }
 
 /// Build a fully-wired engine for the user-chosen advisor `endpoint` + `model`,
@@ -284,7 +316,12 @@ pub fn build_engine(endpoint: &str, model: &str, capability: &CapabilityCatalog)
         worktree_base: worktree_base(),
         default_auth: AuthMode::Subscription,
     };
-    Engine::new(config, Arc::new(SystemProcessRunner), Arc::new(UreqHttp), capability.clone())
+    Engine::new(
+        config,
+        Arc::new(SystemProcessRunner),
+        Arc::new(UreqHttp),
+        capability.clone(),
+    )
 }
 
 /// The list command for `framework`: an `ORYN_LIST_<CLI>` env override (whitespace
@@ -295,7 +332,10 @@ fn list_command_for(framework: AgentFramework, cli: &str) -> Option<ListCommand>
     if let Ok(raw) = std::env::var(key) {
         let mut parts = raw.split_whitespace().map(str::to_string);
         if let Some(program) = parts.next() {
-            return Some(ListCommand { program, args: parts.collect() });
+            return Some(ListCommand {
+                program,
+                args: parts.collect(),
+            });
         }
     }
     default_list_command(framework)
@@ -337,7 +377,12 @@ pub fn discover_specs(
     bundle: &CatalogBundle,
 ) -> (Vec<ModelSpec>, BTreeMap<ModelId, CapabilityProfile>) {
     let discovered = discover_targets(adapters);
-    build_targets(&discovered, &bundle.pricing, &bundle.capability.profiles, DISCOVERY_BASELINE)
+    build_targets(
+        &discovered,
+        &bundle.pricing,
+        &bundle.capability.profiles,
+        DISCOVERY_BASELINE,
+    )
 }
 
 fn framework_for(cli: &str) -> AgentFramework {
@@ -354,7 +399,12 @@ fn framework_for(cli: &str) -> AgentFramework {
 /// A real readiness check: discovers models live from the CLIs, prices them from
 /// the pinned snapshot, constructs the engine, and makes a **live** advisor
 /// round-trip.
-pub fn check_setup(adapters: &[Adapter], endpoint: &str, model: &str, bundle: &CatalogBundle) -> String {
+pub fn check_setup(
+    adapters: &[Adapter],
+    endpoint: &str,
+    model: &str,
+    bundle: &CatalogBundle,
+) -> String {
     let (specs, _profiles) = discover_specs(adapters, bundle);
     let engine = build_engine(endpoint, model, &bundle.capability);
     let advisor_status = probe_advisor(endpoint, model);
@@ -377,7 +427,10 @@ fn probe_advisor(endpoint: &str, model: &str) -> String {
         deps: vec![],
     };
     match advisor.verify(&probe, "Applied the fix; the test suite now passes 14/14.") {
-        Ok(v) => format!("advisor OK ({model}) → passed={} score={:.2}", v.passed, v.score),
+        Ok(v) => format!(
+            "advisor OK ({model}) → passed={} score={:.2}",
+            v.passed, v.score
+        ),
         Err(e) => format!("advisor unreachable: {e}"),
     }
 }
@@ -411,7 +464,13 @@ impl RepoInfo {
         let label = repo_label(&root);
         let (branch, head_short) = git_head(&root);
         let files = list_source_files(&root, 400);
-        Self { root, label, branch, head_short, files }
+        Self {
+            root,
+            label,
+            branch,
+            head_short,
+            files,
+        }
     }
 
     /// `branch@shortsha`, e.g. `main@4f2ab1c`.
@@ -439,7 +498,11 @@ fn find_git_root(start: &std::path::Path) -> Option<PathBuf> {
 /// `<parent>/<dir>` label for the repo, falling back to the final path segment.
 fn repo_label(root: &std::path::Path) -> String {
     let name = root.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
-    match root.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()) {
+    match root
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+    {
         Some(parent) if !parent.is_empty() => format!("{parent}/{name}"),
         _ => name.to_string(),
     }
@@ -455,7 +518,11 @@ fn git_head(root: &std::path::Path) -> (String, String) {
     };
     let head = head.trim();
     if let Some(reference) = head.strip_prefix("ref: ") {
-        let branch = reference.rsplit('/').next().unwrap_or("unknown").to_string();
+        let branch = reference
+            .rsplit('/')
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
         let sha = std::fs::read_to_string(root.join(".git").join(reference))
             .ok()
             .map(|s| s.trim().chars().take(7).collect::<String>())
@@ -470,10 +537,19 @@ fn git_head(root: &std::path::Path) -> (String, String) {
 /// Bounded recursive walk collecting source-looking files (repo-relative paths),
 /// skipping VCS/build/vendor directories. Sorted and capped at `limit`.
 fn list_source_files(root: &std::path::Path, limit: usize) -> Vec<String> {
-    const SKIP: &[&str] = &[".git", "target", "node_modules", ".oryn", "dist", "build", ".venv", "__pycache__"];
+    const SKIP: &[&str] = &[
+        ".git",
+        "target",
+        "node_modules",
+        ".oryn",
+        "dist",
+        "build",
+        ".venv",
+        "__pycache__",
+    ];
     const EXT: &[&str] = &[
-        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "rb", "php", "cs", "c", "h", "cpp",
-        "hpp", "swift", "scala", "md", "toml", "yaml", "yml", "json", "css", "html", "sh",
+        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "rb", "php", "cs", "c", "h",
+        "cpp", "hpp", "swift", "scala", "md", "toml", "yaml", "yml", "json", "css", "html", "sh",
     ];
     let mut out: Vec<String> = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -481,7 +557,9 @@ fn list_source_files(root: &std::path::Path, limit: usize) -> Vec<String> {
         if out.len() >= limit {
             break;
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name();
@@ -493,7 +571,10 @@ fn list_source_files(root: &std::path::Path, limit: usize) -> Vec<String> {
                 if !SKIP.contains(&name.as_ref()) {
                     stack.push(path);
                 }
-            } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| EXT.contains(&e))
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| EXT.contains(&e))
                 && let Ok(rel) = path.strip_prefix(root)
             {
                 out.push(rel.to_string_lossy().replace('\\', "/"));
@@ -547,7 +628,10 @@ pub struct LiveReport {
 impl LiveReport {
     /// Total tokens (input + output) across every attempt.
     pub fn total_tokens(&self) -> u64 {
-        self.attempts.iter().map(|a| a.input_tokens + a.output_tokens).sum()
+        self.attempts
+            .iter()
+            .map(|a| a.input_tokens + a.output_tokens)
+            .sum()
     }
 }
 
@@ -620,7 +704,11 @@ pub fn run_live(
                         passed: attempt.verdict.passed,
                         score: attempt.verdict.score,
                         won,
-                        response: if won { outcome.response_text.clone() } else { String::new() },
+                        response: if won {
+                            outcome.response_text.clone()
+                        } else {
+                            String::new()
+                        },
                     });
                 }
             }
@@ -693,6 +781,9 @@ mod tests {
         let repo = RepoInfo::detect();
         // We are inside the oryn git repo when tests run.
         assert!(!repo.label.is_empty());
-        assert!(repo.files.iter().any(|f| f.ends_with(".rs")), "should list rust sources");
+        assert!(
+            repo.files.iter().any(|f| f.ends_with(".rs")),
+            "should list rust sources"
+        );
     }
 }

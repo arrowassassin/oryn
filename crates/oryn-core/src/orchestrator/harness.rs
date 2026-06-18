@@ -91,7 +91,16 @@ pub fn build_invocation(
     let (program, args, stdin): (&str, Vec<String>, Option<String>) = match target.framework {
         AgentFramework::ClaudeCode => (
             "claude",
-            args(&["-p", "--model", model, "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"]),
+            args(&[
+                "-p",
+                "--model",
+                model,
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--permission-mode",
+                "acceptEdits",
+            ]),
             Some(prompt),
         ),
         AgentFramework::Cursor => (
@@ -101,17 +110,42 @@ pub fn build_invocation(
         ),
         AgentFramework::Codex => (
             "codex",
-            args(&["exec", "--model", model, "--json", "--ask-for-approval", "never", "--sandbox", "workspace-write", &prompt]),
+            args(&[
+                "exec",
+                "--model",
+                model,
+                "--json",
+                "--ask-for-approval",
+                "never",
+                "--sandbox",
+                "workspace-write",
+                &prompt,
+            ]),
             None,
         ),
         AgentFramework::GeminiCli => (
             "gemini",
-            args(&["--model", model, "--output-format", "json", "--yolo", "-p", &prompt]),
+            args(&[
+                "--model",
+                model,
+                "--output-format",
+                "json",
+                "--yolo",
+                "-p",
+                &prompt,
+            ]),
             None,
         ),
         AgentFramework::Aider => (
             "aider",
-            args(&["--model", model, "--yes", "--no-stream", "--message", &prompt]),
+            args(&[
+                "--model",
+                model,
+                "--yes",
+                "--no-stream",
+                "--message",
+                &prompt,
+            ]),
             None,
         ),
         AgentFramework::Local => (
@@ -160,7 +194,13 @@ mod tests {
     }
 
     fn build(fw: AgentFramework, model: &str, prefix: &str, suffix: &str) -> HarnessInvocation {
-        build_invocation(&target(fw, model), prefix, suffix, &wd(), &AuthMode::Subscription)
+        build_invocation(
+            &target(fw, model),
+            prefix,
+            suffix,
+            &wd(),
+            &AuthMode::Subscription,
+        )
     }
 
     // ── combined_prompt ──────────────────────────────────────────────────────
@@ -179,14 +219,23 @@ mod tests {
 
     #[test]
     fn claude_uses_stream_json_model_and_stdin_prompt() {
-        let inv = build(AgentFramework::ClaudeCode, "claude-opus-4-6", "CTX", "fix it");
+        let inv = build(
+            AgentFramework::ClaudeCode,
+            "claude-opus-4-6",
+            "CTX",
+            "fix it",
+        );
         assert_eq!(inv.program, "claude");
         assert!(inv.args.contains(&"-p".to_string()));
         // model is selected explicitly
         let m = inv.args.iter().position(|a| a == "--model").unwrap();
         assert_eq!(inv.args[m + 1], "claude-opus-4-6");
         // structured streaming output
-        let o = inv.args.iter().position(|a| a == "--output-format").unwrap();
+        let o = inv
+            .args
+            .iter()
+            .position(|a| a == "--output-format")
+            .unwrap();
         assert_eq!(inv.args[o + 1], "stream-json");
         assert!(inv.args.contains(&"--verbose".to_string()));
         // prompt on stdin, verbatim prefix first
@@ -199,7 +248,11 @@ mod tests {
         let inv = build(AgentFramework::Cursor, "sonnet-4", "CTX", "fix it");
         assert_eq!(inv.program, "cursor-agent");
         assert_eq!(inv.args.last().unwrap(), "CTX\n\nfix it");
-        let o = inv.args.iter().position(|a| a == "--output-format").unwrap();
+        let o = inv
+            .args
+            .iter()
+            .position(|a| a == "--output-format")
+            .unwrap();
         assert_eq!(inv.args[o + 1], "json");
         assert!(inv.stdin.is_none());
     }
@@ -235,7 +288,10 @@ mod tests {
     fn local_uses_ollama_run_with_stdin() {
         let inv = build(AgentFramework::Local, "qwen2.5-coder", "CTX", "fix it");
         assert_eq!(inv.program, "ollama");
-        assert_eq!(inv.args, vec!["run".to_string(), "qwen2.5-coder".to_string()]);
+        assert_eq!(
+            inv.args,
+            vec!["run".to_string(), "qwen2.5-coder".to_string()]
+        );
         assert_eq!(inv.stdin.as_deref(), Some("CTX\n\nfix it"));
     }
 
@@ -254,9 +310,15 @@ mod tests {
             "C",
             "s",
             &wd(),
-            &AuthMode::ApiKey { var: "ANTHROPIC_API_KEY".into(), value: "sk-xyz".into() },
+            &AuthMode::ApiKey {
+                var: "ANTHROPIC_API_KEY".into(),
+                value: "sk-xyz".into(),
+            },
         );
-        assert_eq!(inv.env, vec![("ANTHROPIC_API_KEY".to_string(), "sk-xyz".to_string())]);
+        assert_eq!(
+            inv.env,
+            vec![("ANTHROPIC_API_KEY".to_string(), "sk-xyz".to_string())]
+        );
     }
 
     // ── determinism ────────────────────────────────────────────────────────────

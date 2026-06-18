@@ -40,11 +40,14 @@ use theme::Theme;
 
 /// The default task text shown in a fresh session, so the Launch screen is never
 /// blank — the user edits it in place before launching.
-const DEFAULT_TASK: &str =
-    "Describe the change you want. e.g. Fix the flaky token-refresh race so concurrent 401s coalesce behind a single-flight guard, and make the refresh test pass.";
+const DEFAULT_TASK: &str = "Describe the change you want. e.g. Fix the flaky token-refresh race so concurrent 401s coalesce behind a single-flight guard, and make the refresh test pass.";
 
 /// A simple view header: an uppercase kicker over a large title.
-pub(crate) fn view_header(t: &Theme, kicker: &'static str, title: &'static str) -> impl IntoElement {
+pub(crate) fn view_header(
+    t: &Theme,
+    kicker: &'static str,
+    title: &'static str,
+) -> impl IntoElement {
     div()
         .flex_none()
         .flex()
@@ -55,8 +58,20 @@ pub(crate) fn view_header(t: &Theme, kicker: &'static str, title: &'static str) 
         .pb(px(14.0))
         .border_b_1()
         .border_color(overlay(t.overlays.w06))
-        .child(div().text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(kicker))
-        .child(div().text_size(px(21.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child(title))
+        .child(
+            div()
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(kicker),
+        )
+        .child(
+            div()
+                .text_size(px(21.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t1))
+                .child(title),
+        )
 }
 
 /// Which primary view is active in the main area.
@@ -116,11 +131,22 @@ impl Root {
                 let Ok(source) = weak.update(cx, |this, _| this.catalog_source) else {
                     break;
                 };
-                let bundle = cx.background_executor().spawn(async move { backend::load_catalog(source) }).await;
-                if weak.update(cx, |this, cx| { this.catalog = bundle; cx.notify(); }).is_err() {
+                let bundle = cx
+                    .background_executor()
+                    .spawn(async move { backend::load_catalog(source) })
+                    .await;
+                if weak
+                    .update(cx, |this, cx| {
+                        this.catalog = bundle;
+                        cx.notify();
+                    })
+                    .is_err()
+                {
                     break;
                 }
-                cx.background_executor().timer(Duration::from_secs(30 * 60)).await;
+                cx.background_executor()
+                    .timer(Duration::from_secs(30 * 60))
+                    .await;
             }
         });
 
@@ -159,7 +185,10 @@ impl Root {
     /// inputs, flips to the Running phase, jumps to Mission Control, then ingests
     /// the [`LiveReport`] when the orchestrator returns. Ignored while a run is
     /// already in flight.
-    pub fn launch_run(&self, cx: &mut Context<Self>) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
+    pub fn launch_run(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
         cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
             if this.phase == Phase::Running {
                 return;
@@ -182,7 +211,9 @@ impl Root {
             let task_handle = cx.spawn(async move |weak, cx| {
                 let report = cx
                     .background_executor()
-                    .spawn(async move { backend::run_live(&adapters, &endpoint, &model, &bundle, &repo, &task) })
+                    .spawn(async move {
+                        backend::run_live(&adapters, &endpoint, &model, &bundle, &repo, &task)
+                    })
                     .await;
                 let _ = weak.update(cx, |this, cx| {
                     this.ingest_report(report);
@@ -196,7 +227,10 @@ impl Root {
     /// Key handler for the editable task field: appends typed characters and
     /// handles backspace / space / enter, so the task is genuinely edited in the
     /// app (not a static label).
-    pub fn task_key(&self, cx: &mut Context<Self>) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
+    pub fn task_key(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
         cx.listener(|this, e: &KeyDownEvent, _w, cx| {
             let k = &e.keystroke;
             // Ignore command/control chords (shortcuts), not text entry.
@@ -224,7 +258,10 @@ impl Root {
     }
 
     /// Focus the task editor (and clear the placeholder on first focus).
-    pub fn focus_task(&self, cx: &mut Context<Self>) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
+    pub fn focus_task(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
         cx.listener(|this, _e: &gpui::ClickEvent, window: &mut Window, cx| {
             if this.task == DEFAULT_TASK {
                 this.task.clear();
@@ -259,11 +296,30 @@ impl Root {
                     .gap(px(9.0))
                     .cursor_pointer()
                     .on_click(self.on(cx, Msg::Navigate(Screen::Mission)))
-                    .child(div().size(px(16.0)).rounded(px(4.0)).bg(solid(t.accent.base)))
-                    .child(div().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child("oryn")),
+                    .child(
+                        div()
+                            .size(px(16.0))
+                            .rounded(px(4.0))
+                            .bg(solid(t.accent.base)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(solid(t.text.t1))
+                            .child("oryn"),
+                    ),
             )
             .child(div().w(px(1.0)).h(px(18.0)).bg(overlay(t.overlays.w10)))
-            .child(div().min_w(px(0.0)).overflow_hidden().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child(title))
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .text_size(px(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(solid(t.text.t1))
+                    .child(title),
+            )
             .child(div().flex_1())
             .child(
                 div()
@@ -276,9 +332,25 @@ impl Root {
                     .bg(overlay(t.overlays.w03))
                     .border_1()
                     .border_color(overlay(t.overlays.w07))
-                    .child(div().text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child("MISSION BURN"))
-                    .child(div().text_size(px(12.0)).text_color(solid(t.text.t1)).child(fmt_usd(self.mission_spend())))
-                    .child(div().text_size(px(11.0)).text_color(solid(t.status.green)).child(format!("saved {}", fmt_usd(saved)))),
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(solid(t.text.t5))
+                            .child("MISSION BURN"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(solid(t.text.t1))
+                            .child(fmt_usd(self.mission_spend())),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(solid(t.status.green))
+                            .child(format!("saved {}", fmt_usd(saved))),
+                    ),
             )
             .child(
                 div()
@@ -311,11 +383,24 @@ impl Root {
         }
     }
 
-    fn nav_item(&self, cx: &mut Context<Self>, screen: Screen, label: &'static str) -> impl IntoElement {
+    fn nav_item(
+        &self,
+        cx: &mut Context<Self>,
+        screen: Screen,
+        label: &'static str,
+    ) -> impl IntoElement {
         let t = self.theme();
         let active = self.screen == screen;
-        let icon_color = if active { solid(t.accent.base) } else { solid(t.text.t5) };
-        let label_color = if active { solid(t.text.t2) } else { solid(t.text.t5) };
+        let icon_color = if active {
+            solid(t.accent.base)
+        } else {
+            solid(t.text.t5)
+        };
+        let label_color = if active {
+            solid(t.text.t2)
+        } else {
+            solid(t.text.t5)
+        };
         div()
             .id(label)
             .relative()
@@ -331,10 +416,24 @@ impl Root {
             .on_click(self.on(cx, Msg::Navigate(screen)))
             .when(active, |d| d.bg(overlay(t.overlays.w05)))
             .when(active, |d| {
-                d.child(div().absolute().left(px(-8.0)).top(px(13.0)).bottom(px(13.0)).w(px(2.5)).rounded(px(3.0)).bg(solid(t.accent.base)))
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(-8.0))
+                        .top(px(13.0))
+                        .bottom(px(13.0))
+                        .w(px(2.5))
+                        .rounded(px(3.0))
+                        .bg(solid(t.accent.base)),
+                )
             })
             .child(div().size(px(18.0)).rounded(px(5.0)).bg(icon_color))
-            .child(div().text_size(px(9.0)).text_color(label_color).child(label))
+            .child(
+                div()
+                    .text_size(px(9.0))
+                    .text_color(label_color)
+                    .child(label),
+            )
     }
 
     fn left_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -356,7 +455,13 @@ impl Root {
             .child(self.nav_item(cx, Screen::Broker, "Broker"))
             .child(div().flex_1())
             .child(self.nav_item(cx, Screen::Launch, "Launch"))
-            .child(div().w(px(30.0)).h(px(1.0)).my(px(6.0)).bg(overlay(t.overlays.w08)))
+            .child(
+                div()
+                    .w(px(30.0))
+                    .h(px(1.0))
+                    .my(px(6.0))
+                    .bg(overlay(t.overlays.w08)),
+            )
             .child(self.nav_item(cx, Screen::Settings, "Settings"))
             .child(self.nav_item(cx, Screen::Profile, "You"))
     }

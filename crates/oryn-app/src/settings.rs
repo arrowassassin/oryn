@@ -6,7 +6,9 @@
 //! builders used by other screens (e.g. the Launcher's scrub toggle).
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, FontWeight, ParentElement, SharedString, Styled, div, px, relative};
+use gpui::{
+    AnyElement, Context, FontWeight, ParentElement, SharedString, Styled, div, px, relative,
+};
 
 use crate::Root;
 use crate::colors::{overlay, solid, tint};
@@ -61,8 +63,16 @@ impl Root {
             t,
             "catsrc",
             vec![
-                ("OpenRouter + Aider", Msg::SetCatalogSource(CatalogSource::Keyless), !aa),
-                ("Artificial Analysis", Msg::SetCatalogSource(CatalogSource::ArtificialAnalysis), aa),
+                (
+                    "OpenRouter + Aider",
+                    Msg::SetCatalogSource(CatalogSource::Keyless),
+                    !aa,
+                ),
+                (
+                    "Artificial Analysis",
+                    Msg::SetCatalogSource(CatalogSource::ArtificialAnalysis),
+                    aa,
+                ),
             ],
         );
         let guidance: &'static str = if aa {
@@ -105,8 +115,11 @@ impl Root {
             }))
             .child("Verify");
 
-        let status_line: SharedString =
-            self.source_status.clone().unwrap_or_else(|| "not verified".to_string()).into();
+        let status_line: SharedString = self
+            .source_status
+            .clone()
+            .unwrap_or_else(|| "not verified".to_string())
+            .into();
 
         card(
             t,
@@ -114,8 +127,19 @@ impl Root {
             div()
                 .flex()
                 .flex_col()
-                .child(setting_row(t, "Source", "drives cost + capability routing", seg))
-                .child(div().py(px(8.0)).text_size(px(10.5)).text_color(solid(t.text.t5)).child(guidance))
+                .child(setting_row(
+                    t,
+                    "Source",
+                    "drives cost + capability routing",
+                    seg,
+                ))
+                .child(
+                    div()
+                        .py(px(8.0))
+                        .text_size(px(10.5))
+                        .text_color(solid(t.text.t5))
+                        .child(guidance),
+                )
                 .child(
                     div()
                         .flex()
@@ -125,7 +149,13 @@ impl Root {
                         .pt(px(12.0))
                         .border_t_1()
                         .border_color(overlay(t.overlays.w05))
-                        .child(div().flex_1().text_size(px(11.0)).text_color(solid(t.text.t5)).child(status_line))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(11.0))
+                                .text_color(solid(t.text.t5))
+                                .child(status_line),
+                        )
                         .child(verify),
                 ),
         )
@@ -145,8 +175,17 @@ impl Root {
                     .text_size(px(11.0))
                     .cursor_pointer()
                     .on_click(self.on(cx, Msg::SetAdvisorModel(i)))
-                    .when(active, |d| d.bg(solid(t.accent.base)).text_color(solid(0x1A0F2E)).font_weight(FontWeight::SEMIBOLD))
-                    .when(!active, |d| d.bg(overlay(t.overlays.w04)).border_1().border_color(overlay(t.overlays.w08)).text_color(solid(t.text.t3)))
+                    .when(active, |d| {
+                        d.bg(solid(t.accent.base))
+                            .text_color(solid(0x1A0F2E))
+                            .font_weight(FontWeight::SEMIBOLD)
+                    })
+                    .when(!active, |d| {
+                        d.bg(overlay(t.overlays.w04))
+                            .border_1()
+                            .border_color(overlay(t.overlays.w08))
+                            .text_color(solid(t.text.t3))
+                    })
                     .child(*m),
             );
         }
@@ -176,7 +215,9 @@ impl Root {
                 cx.spawn(async move |weak, cx| {
                     let status = cx
                         .background_executor()
-                        .spawn(async move { crate::backend::check_setup(&adapters, &endpoint, &model, &bundle) })
+                        .spawn(async move {
+                            crate::backend::check_setup(&adapters, &endpoint, &model, &bundle)
+                        })
                         .await;
                     let _ = weak.update(cx, |this, cx| {
                         this.advisor.status = Some(status);
@@ -209,7 +250,12 @@ impl Root {
                         .text_color(solid(t.text.t2))
                         .child(self.advisor.endpoint.clone()),
                 ))
-                .child(setting_row(t, "Model", "deterministic · runs locally · gates escalation", chips))
+                .child(setting_row(
+                    t,
+                    "Model",
+                    "deterministic · runs locally · gates escalation",
+                    chips,
+                ))
                 .child(
                     div()
                         .flex()
@@ -219,7 +265,13 @@ impl Root {
                         .pt(px(12.0))
                         .border_t_1()
                         .border_color(overlay(t.overlays.w05))
-                        .child(div().flex_1().text_size(px(11.0)).text_color(solid(t.text.t5)).child(status_line))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(11.0))
+                                .text_color(solid(t.text.t5))
+                                .child(status_line),
+                        )
                         .child(check),
                 ),
         )
@@ -232,9 +284,21 @@ impl Root {
             t,
             "theme",
             vec![
-                ("Dark", Msg::SetTheme(ThemeChoice::Dark), s.theme == ThemeChoice::Dark),
-                ("Light", Msg::SetTheme(ThemeChoice::Light), s.theme == ThemeChoice::Light),
-                ("Auto", Msg::SetTheme(ThemeChoice::Auto), s.theme == ThemeChoice::Auto),
+                (
+                    "Dark",
+                    Msg::SetTheme(ThemeChoice::Dark),
+                    s.theme == ThemeChoice::Dark,
+                ),
+                (
+                    "Light",
+                    Msg::SetTheme(ThemeChoice::Light),
+                    s.theme == ThemeChoice::Light,
+                ),
+                (
+                    "Auto",
+                    Msg::SetTheme(ThemeChoice::Auto),
+                    s.theme == ThemeChoice::Auto,
+                ),
             ],
         );
         let density_seg = self.segmented(
@@ -242,9 +306,21 @@ impl Root {
             t,
             "density",
             vec![
-                ("Compact", Msg::SetDensity(Density::Compact), s.density == Density::Compact),
-                ("Comfortable", Msg::SetDensity(Density::Comfortable), s.density == Density::Comfortable),
-                ("Spacious", Msg::SetDensity(Density::Spacious), s.density == Density::Spacious),
+                (
+                    "Compact",
+                    Msg::SetDensity(Density::Compact),
+                    s.density == Density::Compact,
+                ),
+                (
+                    "Comfortable",
+                    Msg::SetDensity(Density::Comfortable),
+                    s.density == Density::Comfortable,
+                ),
+                (
+                    "Spacious",
+                    Msg::SetDensity(Density::Spacious),
+                    s.density == Density::Spacious,
+                ),
             ],
         );
         let font_seg = self.segmented(
@@ -252,9 +328,21 @@ impl Root {
             t,
             "font",
             vec![
-                ("Geist", Msg::SetFont(FontChoice::Geist), s.font == FontChoice::Geist),
-                ("IBM Plex", Msg::SetFont(FontChoice::IbmPlex), s.font == FontChoice::IbmPlex),
-                ("System", Msg::SetFont(FontChoice::System), s.font == FontChoice::System),
+                (
+                    "Geist",
+                    Msg::SetFont(FontChoice::Geist),
+                    s.font == FontChoice::Geist,
+                ),
+                (
+                    "IBM Plex",
+                    Msg::SetFont(FontChoice::IbmPlex),
+                    s.font == FontChoice::IbmPlex,
+                ),
+                (
+                    "System",
+                    Msg::SetFont(FontChoice::System),
+                    s.font == FontChoice::System,
+                ),
             ],
         );
         card(
@@ -263,11 +351,43 @@ impl Root {
             div()
                 .flex()
                 .flex_col()
-                .child(setting_row(t, "Theme", "surface tone across the app", theme_seg))
-                .child(setting_row(t, format!("Accent · {}", t.accent.name), "focus, primary actions, live state", self.accent_swatches(cx, t)))
-                .child(setting_row(t, "Density", "row height and padding", density_seg))
-                .child(setting_row(t, "UI font", "data & code always use the mono", font_seg))
-                .child(setting_row(t, "Reduce motion", "pauses the live race & gauge animation", toggle_switch(self, cx, t, "reduce", self.settings.reduce_motion, Msg::ToggleReduceMotion))),
+                .child(setting_row(
+                    t,
+                    "Theme",
+                    "surface tone across the app",
+                    theme_seg,
+                ))
+                .child(setting_row(
+                    t,
+                    format!("Accent · {}", t.accent.name),
+                    "focus, primary actions, live state",
+                    self.accent_swatches(cx, t),
+                ))
+                .child(setting_row(
+                    t,
+                    "Density",
+                    "row height and padding",
+                    density_seg,
+                ))
+                .child(setting_row(
+                    t,
+                    "UI font",
+                    "data & code always use the mono",
+                    font_seg,
+                ))
+                .child(setting_row(
+                    t,
+                    "Reduce motion",
+                    "pauses the live race & gauge animation",
+                    toggle_switch(
+                        self,
+                        cx,
+                        t,
+                        "reduce",
+                        self.settings.reduce_motion,
+                        Msg::ToggleReduceMotion,
+                    ),
+                )),
         )
     }
 
@@ -286,7 +406,19 @@ impl Root {
                         .child(cap_field(t, "Default token cap", "300k", 0.6))
                         .child(cap_field(t, "Default USD cap", "$4.00", 0.5)),
                 )
-                .child(setting_row(t, "Auto-tear-down losing worktrees", "remove non-promoted worktrees after a race", toggle_switch(self, cx, t, "cleanup", self.settings.auto_cleanup, Msg::ToggleAutoCleanup))),
+                .child(setting_row(
+                    t,
+                    "Auto-tear-down losing worktrees",
+                    "remove non-promoted worktrees after a race",
+                    toggle_switch(
+                        self,
+                        cx,
+                        t,
+                        "cleanup",
+                        self.settings.auto_cleanup,
+                        Msg::ToggleAutoCleanup,
+                    ),
+                )),
         )
     }
 
@@ -297,12 +429,35 @@ impl Root {
             div()
                 .flex()
                 .flex_col()
-                .child(setting_row(t, "Scrub secrets before persist", "redact tokens & keys from raw payloads", toggle_switch(self, cx, t, "scrub2", self.settings.scrub, Msg::ToggleScrub)))
-                .child(setting_row(t, "Anonymous telemetry", "never includes code or payloads", toggle_switch(self, cx, t, "telemetry", self.settings.telemetry, Msg::ToggleTelemetry))),
+                .child(setting_row(
+                    t,
+                    "Scrub secrets before persist",
+                    "redact tokens & keys from raw payloads",
+                    toggle_switch(self, cx, t, "scrub2", self.settings.scrub, Msg::ToggleScrub),
+                ))
+                .child(setting_row(
+                    t,
+                    "Anonymous telemetry",
+                    "never includes code or payloads",
+                    toggle_switch(
+                        self,
+                        cx,
+                        t,
+                        "telemetry",
+                        self.settings.telemetry,
+                        Msg::ToggleTelemetry,
+                    ),
+                )),
         )
     }
 
-    fn segmented(&self, cx: &mut Context<Self>, t: &Theme, id: &'static str, opts: Vec<(&'static str, Msg, bool)>) -> AnyElement {
+    fn segmented(
+        &self,
+        cx: &mut Context<Self>,
+        t: &Theme,
+        id: &'static str,
+        opts: Vec<(&'static str, Msg, bool)>,
+    ) -> AnyElement {
         let mut row = div()
             .flex()
             .gap(px(3.0))
@@ -324,7 +479,11 @@ impl Root {
                     .text_size(px(12.0))
                     .cursor_pointer()
                     .on_click(self.on(cx, msg))
-                    .when(active, |d| d.bg(overlay(t.overlays.w09)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)))
+                    .when(active, |d| {
+                        d.bg(overlay(t.overlays.w09))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(solid(t.text.t1))
+                    })
                     .when(!active, |d| d.text_color(solid(t.text.t4)))
                     .child(label),
             );
@@ -356,7 +515,14 @@ impl Root {
 // ── reusable controls ──────────────────────────────────────────────────────────
 
 /// An interactive on/off switch bound to `msg`. Shared across screens.
-pub(crate) fn toggle_switch(root: &Root, cx: &mut Context<Root>, t: &Theme, id: &'static str, on: bool, msg: Msg) -> impl IntoElement {
+pub(crate) fn toggle_switch(
+    root: &Root,
+    cx: &mut Context<Root>,
+    t: &Theme,
+    id: &'static str,
+    on: bool,
+    msg: Msg,
+) -> impl IntoElement {
     let track = div()
         .id(id)
         .relative()
@@ -368,15 +534,25 @@ pub(crate) fn toggle_switch(root: &Root, cx: &mut Context<Root>, t: &Theme, id: 
         .cursor_pointer()
         .on_click(root.on(cx, msg));
     let track = if on {
-        track.bg(solid(t.accent.base)).border_color(tint(t.accent.base, 0.0))
+        track
+            .bg(solid(t.accent.base))
+            .border_color(tint(t.accent.base, 0.0))
     } else {
-        track.bg(overlay(t.overlays.w13)).border_color(overlay(t.overlays.w08))
+        track
+            .bg(overlay(t.overlays.w13))
+            .border_color(overlay(t.overlays.w08))
     };
     track.child(
         div()
             .absolute()
             .top(px(2.0))
-            .map(|d| if on { d.right(px(2.0)) } else { d.left(px(2.0)) })
+            .map(|d| {
+                if on {
+                    d.right(px(2.0))
+                } else {
+                    d.left(px(2.0))
+                }
+            })
             .size(px(15.0))
             .rounded_full()
             .bg(solid(0xFFFFFF)),
@@ -395,11 +571,23 @@ fn card(t: &Theme, title: &'static str, body: impl IntoElement) -> impl IntoElem
         .rounded(px(12.0))
         .px(px(18.0))
         .py(px(16.0))
-        .child(div().mb(px(8.0)).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child(title))
+        .child(
+            div()
+                .mb(px(8.0))
+                .text_size(px(10.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t3))
+                .child(title),
+        )
         .child(body)
 }
 
-fn setting_row(t: &Theme, title: impl Into<SharedString>, sub: &'static str, control: impl IntoElement) -> impl IntoElement {
+fn setting_row(
+    t: &Theme,
+    title: impl Into<SharedString>,
+    sub: &'static str,
+    control: impl IntoElement,
+) -> impl IntoElement {
     let title: SharedString = title.into();
     div()
         .flex()
@@ -414,13 +602,29 @@ fn setting_row(t: &Theme, title: impl Into<SharedString>, sub: &'static str, con
                 .flex()
                 .flex_col()
                 .gap(px(2.0))
-                .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child(title))
-                .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(sub)),
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(solid(t.text.t1))
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(solid(t.text.t5))
+                        .child(sub),
+                ),
         )
         .child(control)
 }
 
-fn cap_field(t: &Theme, label: &'static str, value: &'static str, fraction: f32) -> impl IntoElement {
+fn cap_field(
+    t: &Theme,
+    label: &'static str,
+    value: &'static str,
+    fraction: f32,
+) -> impl IntoElement {
     div()
         .flex_1()
         .flex()
@@ -430,8 +634,18 @@ fn cap_field(t: &Theme, label: &'static str, value: &'static str, fraction: f32)
                 .flex()
                 .justify_between()
                 .mb(px(8.0))
-                .child(div().text_size(px(11.5)).text_color(solid(t.text.t2)).child(label))
-                .child(div().text_size(px(12.0)).text_color(solid(t.accent.base)).child(value)),
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(solid(t.text.t2))
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(solid(t.accent.base))
+                        .child(value),
+                ),
         )
         .child(
             div()
@@ -439,7 +653,13 @@ fn cap_field(t: &Theme, label: &'static str, value: &'static str, fraction: f32)
                 .rounded(px(3.0))
                 .bg(overlay(t.overlays.w07))
                 .overflow_hidden()
-                .child(div().h_full().w(relative(fraction)).rounded(px(3.0)).bg(solid(t.accent.base))),
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(fraction))
+                        .rounded(px(3.0))
+                        .bg(solid(t.accent.base)),
+                ),
         )
 }
 
@@ -457,8 +677,19 @@ fn worktree_card(t: &Theme) -> impl IntoElement {
             .border_1()
             .border_color(overlay(t.overlays.w09))
             .rounded(px(9.0))
-            .child(div().text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child("BASE"))
-            .child(div().text_size(px(12.0)).text_color(solid(t.text.t1)).child("~/.oryn/worktrees")),
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(solid(t.text.t5))
+                    .child("BASE"),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(solid(t.text.t1))
+                    .child("~/.oryn/worktrees"),
+            ),
     )
 }
 
@@ -489,8 +720,19 @@ fn preview_card(t: &Theme) -> impl IntoElement {
                 .items_center()
                 .gap(px(9.0))
                 .mb(px(13.0))
-                .child(div().size(px(9.0)).rounded(px(3.0)).bg(solid(t.accent.base)))
-                .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(13.0)).text_color(solid(t.text.t1)).child("claude"))
+                .child(
+                    div()
+                        .size(px(9.0))
+                        .rounded(px(3.0))
+                        .bg(solid(t.accent.base)),
+                )
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_size(px(13.0))
+                        .text_color(solid(t.text.t1))
+                        .child("claude"),
+                )
                 .child(crate::mission::pill_chip(t, "LEADING")),
         )
         .child(
@@ -498,8 +740,18 @@ fn preview_card(t: &Theme) -> impl IntoElement {
                 .flex()
                 .justify_between()
                 .mb(px(6.0))
-                .child(div().text_size(px(10.0)).text_color(solid(t.text.t4)).child("Tokens"))
-                .child(div().text_size(px(10.5)).text_color(solid(t.text.t3)).child("184k / 300k")),
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(solid(t.text.t4))
+                        .child("Tokens"),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(solid(t.text.t3))
+                        .child("184k / 300k"),
+                ),
         )
         .child(
             div()
@@ -508,7 +760,13 @@ fn preview_card(t: &Theme) -> impl IntoElement {
                 .rounded(px(3.0))
                 .bg(overlay(t.overlays.w06))
                 .overflow_hidden()
-                .child(div().h_full().w(relative(0.61)).rounded(px(3.0)).bg(solid(t.accent.base))),
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(0.61))
+                        .rounded(px(3.0))
+                        .bg(solid(t.accent.base)),
+                ),
         )
         .child(
             div()

@@ -162,7 +162,11 @@ impl AgentRun {
             subtask: a.subtask.clone(),
             color: framework_color(&a.framework),
             won: a.won,
-            status: if a.passed { RunStatus::Passed } else { RunStatus::Failed },
+            status: if a.passed {
+                RunStatus::Passed
+            } else {
+                RunStatus::Failed
+            },
             score: a.score,
             tier_rank: a.tier_rank,
             input_tokens: a.input_tokens,
@@ -227,8 +231,13 @@ impl CatalogSource {
 }
 
 /// Local advisor models the user can pick in Settings (deterministic + reasoning).
-pub const ADVISOR_MODELS: [&str; 5] =
-    ["qwen2.5-coder:7b", "deepseek-r1:7b", "qwq", "llama3.2:3b", "qwen2.5-coder:1.5b"];
+pub const ADVISOR_MODELS: [&str; 5] = [
+    "qwen2.5-coder:7b",
+    "deepseek-r1:7b",
+    "qwq",
+    "llama3.2:3b",
+    "qwen2.5-coder:1.5b",
+];
 
 /// User-chosen connection to the local advisor model.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,10 +254,15 @@ impl AdvisorPrefs {
     /// Read defaults from the environment (`ORYN_ADVISOR_ENDPOINT`,
     /// `ORYN_ADVISOR_MODEL`), falling back to a local Ollama with the default model.
     pub fn from_env() -> Self {
-        let endpoint =
-            std::env::var("ORYN_ADVISOR_ENDPOINT").unwrap_or_else(|_| "http://localhost:11434".into());
-        let model = std::env::var("ORYN_ADVISOR_MODEL").unwrap_or_else(|_| ADVISOR_MODELS[0].into());
-        Self { endpoint, model, status: None }
+        let endpoint = std::env::var("ORYN_ADVISOR_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:11434".into());
+        let model =
+            std::env::var("ORYN_ADVISOR_MODEL").unwrap_or_else(|_| ADVISOR_MODELS[0].into());
+        Self {
+            endpoint,
+            model,
+            status: None,
+        }
     }
 }
 
@@ -337,7 +351,11 @@ impl Root {
             .position(|a| a.won && a.status == RunStatus::Passed)
             .unwrap_or(0);
         self.promoted = None;
-        self.phase = if self.agents.is_empty() { Phase::Failed } else { Phase::Done };
+        self.phase = if self.agents.is_empty() {
+            Phase::Failed
+        } else {
+            Phase::Done
+        };
         self.report = Some(report);
     }
 
@@ -353,9 +371,16 @@ impl Root {
             Phase::Running => "running — orchestrator routing subtasks".into(),
             Phase::Failed => self.run_note.clone(),
             Phase::Done => {
-                let passed = self.agents.iter().filter(|a| a.won && a.status == RunStatus::Passed).count();
+                let passed = self
+                    .agents
+                    .iter()
+                    .filter(|a| a.won && a.status == RunStatus::Passed)
+                    .count();
                 let won = self.agents.iter().filter(|a| a.won).count();
-                format!("{} attempt(s) · {won} winner(s) · {passed} verified", self.agents.len())
+                format!(
+                    "{} attempt(s) · {won} winner(s) · {passed} verified",
+                    self.agents.len()
+                )
             }
         }
     }
@@ -395,7 +420,11 @@ mod tests {
             passed,
             score: if passed { 0.9 } else { 0.2 },
             won,
-            response: if won { "did the thing".into() } else { String::new() },
+            response: if won {
+                "did the thing".into()
+            } else {
+                String::new()
+            },
         }
     }
 

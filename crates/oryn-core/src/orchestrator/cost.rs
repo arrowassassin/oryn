@@ -82,7 +82,10 @@ pub struct Spend {
 
 impl Spend {
     /// A zeroed tally.
-    pub const ZERO: Self = Self { gross_usd: 0.0, saved_usd: 0.0 };
+    pub const ZERO: Self = Self {
+        gross_usd: 0.0,
+        saved_usd: 0.0,
+    };
 
     /// Accumulate one completion's `usage` priced at `pricing`.
     pub fn add(&mut self, usage: &TokenUsage, pricing: &Pricing) {
@@ -117,7 +120,12 @@ mod tests {
 
     /// Anthropic-like price sheet (USD per million tokens).
     fn anthropic_pricing() -> Pricing {
-        Pricing { input: 3.0, output: 15.0, cache_read: 0.30, cache_write: 3.75 }
+        Pricing {
+            input: 3.0,
+            output: 15.0,
+            cache_read: 0.30,
+            cache_write: 3.75,
+        }
     }
 
     fn approx(a: f64, b: f64) {
@@ -146,7 +154,12 @@ mod tests {
 
     #[test]
     fn cost_usd_local_zero_pricing_is_zero() {
-        let usage = TokenUsage { input: 5_000, output: 9_000, cache_read: 1_000, cache_write: 2_000 };
+        let usage = TokenUsage {
+            input: 5_000,
+            output: 9_000,
+            cache_read: 1_000,
+            cache_write: 2_000,
+        };
         approx(cost_usd(&usage, &Pricing::ZERO), 0.0);
     }
 
@@ -174,14 +187,22 @@ mod tests {
     #[test]
     fn baseline_equals_cost_when_no_cache_tokens() {
         // With no cache_read/cache_write there is nothing to discount.
-        let usage = TokenUsage { input: 500_000, output: 250_000, cache_read: 0, cache_write: 0 };
+        let usage = TokenUsage {
+            input: 500_000,
+            output: 250_000,
+            cache_read: 0,
+            cache_write: 0,
+        };
         let p = anthropic_pricing();
         approx(baseline_usd(&usage, &p), cost_usd(&usage, &p));
     }
 
     #[test]
     fn baseline_usd_zero_usage_is_zero() {
-        approx(baseline_usd(&TokenUsage::default(), &anthropic_pricing()), 0.0);
+        approx(
+            baseline_usd(&TokenUsage::default(), &anthropic_pricing()),
+            0.0,
+        );
     }
 
     // ── cache_savings_usd ─────────────────────────────────────────────────────────
@@ -196,7 +217,10 @@ mod tests {
         };
         let p = anthropic_pricing();
         // 24.0 - 22.05 = 1.95
-        approx(cache_savings_usd(&usage, &p), baseline_usd(&usage, &p) - cost_usd(&usage, &p));
+        approx(
+            cache_savings_usd(&usage, &p),
+            baseline_usd(&usage, &p) - cost_usd(&usage, &p),
+        );
         approx(cache_savings_usd(&usage, &p), 1.95);
     }
 
@@ -204,14 +228,27 @@ mod tests {
     fn cache_savings_is_never_negative() {
         // Pathological sheet: cache rates above the input rate would imply a
         // "negative saving" — must clamp to 0.
-        let usage = TokenUsage { input: 0, output: 0, cache_read: 1_000_000, cache_write: 0 };
-        let bad = Pricing { input: 1.0, output: 1.0, cache_read: 5.0, cache_write: 5.0 };
+        let usage = TokenUsage {
+            input: 0,
+            output: 0,
+            cache_read: 1_000_000,
+            cache_write: 0,
+        };
+        let bad = Pricing {
+            input: 1.0,
+            output: 1.0,
+            cache_read: 5.0,
+            cache_write: 5.0,
+        };
         assert_eq!(cache_savings_usd(&usage, &bad), 0.0);
     }
 
     #[test]
     fn cache_savings_zero_usage_is_zero() {
-        approx(cache_savings_usd(&TokenUsage::default(), &anthropic_pricing()), 0.0);
+        approx(
+            cache_savings_usd(&TokenUsage::default(), &anthropic_pricing()),
+            0.0,
+        );
     }
 
     // ── Spend ─────────────────────────────────────────────────────────────────────
@@ -269,7 +306,12 @@ mod tests {
     #[test]
     fn fraction_saved_within_unit_interval() {
         let p = anthropic_pricing();
-        let usage = TokenUsage { input: 100, output: 50, cache_read: 9_000, cache_write: 800 };
+        let usage = TokenUsage {
+            input: 100,
+            output: 50,
+            cache_read: 9_000,
+            cache_write: 800,
+        };
         let mut s = Spend::ZERO;
         s.add(&usage, &p);
         let f = s.fraction_saved();

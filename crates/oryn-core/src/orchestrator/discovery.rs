@@ -66,9 +66,7 @@ pub trait ModelDiscovery: Send + Sync {
 ///
 /// A source that returns [`Err`] is skipped; its error is appended to the
 /// second element of the returned tuple. Remaining sources are still queried.
-pub fn discover_targets(
-    sources: &[&dyn ModelDiscovery],
-) -> (Vec<ModelSpec>, Vec<DiscoveryError>) {
+pub fn discover_targets(sources: &[&dyn ModelDiscovery]) -> (Vec<ModelSpec>, Vec<DiscoveryError>) {
     // Use a BTreeMap keyed by ExecutionTarget to deduplicate (first wins) and
     // to guarantee deterministic output ordering.
     let mut seen: std::collections::BTreeMap<ExecutionTarget, ModelSpec> =
@@ -109,11 +107,17 @@ mod tests {
 
     impl FakeDiscovery {
         fn ok(framework: AgentFramework, specs: Vec<ModelSpec>) -> Self {
-            Self { framework, result: Ok(specs) }
+            Self {
+                framework,
+                result: Ok(specs),
+            }
         }
 
         fn unauthorized(framework: AgentFramework) -> Self {
-            Self { framework, result: Err(()) }
+            Self {
+                framework,
+                result: Err(()),
+            }
         }
     }
 
@@ -135,7 +139,9 @@ mod tests {
     fn make_spec(framework: AgentFramework, id: &str) -> ModelSpec {
         ModelSpec {
             id: ModelId::new(id),
-            kind: ModelKind::Api { provider: "test".into() },
+            kind: ModelKind::Api {
+                provider: "test".into(),
+            },
             pricing: Pricing::ZERO,
             context_window: 128_000,
             framework,
@@ -184,7 +190,10 @@ mod tests {
 
         let (specs, _) = discover_targets(&[&src1, &src2]);
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].context_window, spec_a.context_window, "first spec must win");
+        assert_eq!(
+            specs[0].context_window, spec_a.context_window,
+            "first spec must win"
+        );
     }
 
     #[test]
@@ -199,10 +208,20 @@ mod tests {
             vec![make_spec(AgentFramework::Codex, "opus")],
         );
         let (specs, _) = discover_targets(&[&src1, &src2]);
-        assert_eq!(specs.len(), 2, "same model id + different frameworks = two distinct targets");
+        assert_eq!(
+            specs.len(),
+            2,
+            "same model id + different frameworks = two distinct targets"
+        );
         let targets: Vec<ExecutionTarget> = specs.iter().map(|s| s.target()).collect();
-        assert!(targets.contains(&ExecutionTarget::new(AgentFramework::ClaudeCode, ModelId::new("opus"))));
-        assert!(targets.contains(&ExecutionTarget::new(AgentFramework::Codex, ModelId::new("opus"))));
+        assert!(targets.contains(&ExecutionTarget::new(
+            AgentFramework::ClaudeCode,
+            ModelId::new("opus")
+        )));
+        assert!(targets.contains(&ExecutionTarget::new(
+            AgentFramework::Codex,
+            ModelId::new("opus")
+        )));
     }
 
     // ── discover_targets: error handling ─────────────────────────────────────
@@ -250,7 +269,11 @@ mod tests {
         );
         let (specs, _) = discover_targets(&[&src]);
         let ids: Vec<&str> = specs.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["aaa", "mmm", "zzz"], "specs must be sorted by ExecutionTarget");
+        assert_eq!(
+            ids,
+            ["aaa", "mmm", "zzz"],
+            "specs must be sorted by ExecutionTarget"
+        );
     }
 
     #[test]
@@ -259,10 +282,14 @@ mod tests {
         // ClaudeCode < Codex < Cursor < Aider < GeminiCli < Local. Sorting by
         // ExecutionTarget therefore orders Cursor before Aider regardless of the
         // order the sources were supplied in.
-        let src_aider =
-            FakeDiscovery::ok(AgentFramework::Aider, vec![make_spec(AgentFramework::Aider, "m")]);
-        let src_cursor =
-            FakeDiscovery::ok(AgentFramework::Cursor, vec![make_spec(AgentFramework::Cursor, "m")]);
+        let src_aider = FakeDiscovery::ok(
+            AgentFramework::Aider,
+            vec![make_spec(AgentFramework::Aider, "m")],
+        );
+        let src_cursor = FakeDiscovery::ok(
+            AgentFramework::Cursor,
+            vec![make_spec(AgentFramework::Cursor, "m")],
+        );
         let (specs, _) = discover_targets(&[&src_aider, &src_cursor]);
         assert_eq!(specs[0].framework, AgentFramework::Cursor);
         assert_eq!(specs[1].framework, AgentFramework::Aider);

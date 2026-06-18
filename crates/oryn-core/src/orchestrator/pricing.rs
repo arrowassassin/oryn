@@ -36,7 +36,15 @@ impl PricingTable {
     pub fn seed() -> Self {
         let mut prices = BTreeMap::new();
         let mut put = |id: &str, input: f64, output: f64, cr: f64, cw: f64| {
-            prices.insert(ModelId::new(id), Pricing { input, output, cache_read: cr, cache_write: cw });
+            prices.insert(
+                ModelId::new(id),
+                Pricing {
+                    input,
+                    output,
+                    cache_read: cr,
+                    cache_write: cw,
+                },
+            );
         };
         put("opus", 15.0, 75.0, 1.5, 18.75);
         put("sonnet", 3.0, 15.0, 0.3, 3.75);
@@ -72,7 +80,9 @@ impl PricingTable {
             .iter()
             .find(|(id, _)| {
                 let s = id.as_str();
-                s == query || s.rsplit('/').next() == Some(query) || s.ends_with(&format!("/{query}"))
+                s == query
+                    || s.rsplit('/').next() == Some(query)
+                    || s.ends_with(&format!("/{query}"))
             })
             .map(|(_, p)| *p)
     }
@@ -89,7 +99,8 @@ impl PricingTable {
 ///
 /// [`SourceError::Malformed`] if the top-level `data` array is missing.
 pub fn parse_openrouter_models(body: &str) -> Result<BTreeMap<ModelId, Pricing>, SourceError> {
-    let root: Value = serde_json::from_str(body).map_err(|e| SourceError::Malformed(e.to_string()))?;
+    let root: Value =
+        serde_json::from_str(body).map_err(|e| SourceError::Malformed(e.to_string()))?;
     let data = root
         .get("data")
         .and_then(Value::as_array)
@@ -106,7 +117,11 @@ pub fn parse_openrouter_models(body: &str) -> Result<BTreeMap<ModelId, Pricing>,
         let per_tok = |key: &str| {
             pricing
                 .get(key)
-                .and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_f64()))
+                .and_then(|v| {
+                    v.as_str()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .or_else(|| v.as_f64())
+                })
                 .unwrap_or(0.0)
                 * PER_MILLION
         };
@@ -149,7 +164,10 @@ mod tests {
     fn seed_has_known_models_and_free_local() {
         let t = PricingTable::seed();
         assert!(t.price(&ModelId::new("opus")).is_some());
-        assert_eq!(t.price(&ModelId::new("local-qwen-coder")).unwrap(), Pricing::ZERO);
+        assert_eq!(
+            t.price(&ModelId::new("local-qwen-coder")).unwrap(),
+            Pricing::ZERO
+        );
         assert_eq!(t.provenance.version, "seed");
     }
 
@@ -181,7 +199,11 @@ mod tests {
         let prices = parse_openrouter_models(body).unwrap();
         let table = PricingTable {
             prices,
-            provenance: CatalogProvenance { source: "openrouter".into(), fetched_at_unix: 1, version: "v1".into() },
+            provenance: CatalogProvenance {
+                source: "openrouter".into(),
+                fetched_at_unix: 1,
+                version: "v1".into(),
+            },
         };
         // exact full slug
         assert!(table.price_fuzzy("anthropic/claude-3.7-sonnet").is_some());
@@ -193,7 +215,11 @@ mod tests {
 
     #[test]
     fn parse_is_deterministic() {
-        let body = r#"{"data":[{"id":"a/b","pricing":{"prompt":"0.000001","completion":"0.000002"}}]}"#;
-        assert_eq!(parse_openrouter_models(body).unwrap(), parse_openrouter_models(body).unwrap());
+        let body =
+            r#"{"data":[{"id":"a/b","pricing":{"prompt":"0.000001","completion":"0.000002"}}]}"#;
+        assert_eq!(
+            parse_openrouter_models(body).unwrap(),
+            parse_openrouter_models(body).unwrap()
+        );
     }
 }

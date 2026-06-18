@@ -31,7 +31,10 @@ struct UreqHttp;
 
 impl Http for UreqHttp {
     fn post_json(&self, url: &str, body: &str) -> Result<String, HttpError> {
-        match ureq::post(url).set("Content-Type", "application/json").send_string(body) {
+        match ureq::post(url)
+            .set("Content-Type", "application/json")
+            .send_string(body)
+        {
             Ok(resp) => resp.into_string().map_err(|_| HttpError::Unreachable),
             Err(ureq::Error::Status(code, _)) => Err(HttpError::Status(code)),
             Err(_) => Err(HttpError::Unreachable),
@@ -56,8 +59,14 @@ fn main() {
     };
 
     let cases = [
-        ("GOOD result", "Added a single-flight promise cache in refreshQueue.ts; concurrent 401s now await one refresh. Ran `pnpm vitest run auth/refresh` → 14/14 passing."),
-        ("BAD result", "Renamed a variable and added a comment. Did not touch the refresh logic; tests still fail 3/14."),
+        (
+            "GOOD result",
+            "Added a single-flight promise cache in refreshQueue.ts; concurrent 401s now await one refresh. Ran `pnpm vitest run auth/refresh` → 14/14 passing.",
+        ),
+        (
+            "BAD result",
+            "Renamed a variable and added a comment. Did not touch the refresh logic; tests still fail 3/14.",
+        ),
     ];
 
     let mut failures = 0;

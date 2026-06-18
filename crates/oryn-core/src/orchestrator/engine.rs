@@ -48,7 +48,14 @@ impl AdvisorConfig {
     /// A config for `endpoint` + `model` with a deny-by-default fallback (an
     /// unreachable advisor never auto-passes a sub-task).
     pub fn new(endpoint: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { endpoint: endpoint.into(), model: model.into(), fallback: Verdict { passed: false, score: 0.0 } }
+        Self {
+            endpoint: endpoint.into(),
+            model: model.into(),
+            fallback: Verdict {
+                passed: false,
+                score: 0.0,
+            },
+        }
     }
 }
 
@@ -104,7 +111,12 @@ impl Engine {
         http: Arc<dyn Http>,
         catalog: CapabilityCatalog,
     ) -> Self {
-        Self { config, runner, http, catalog }
+        Self {
+            config,
+            runner,
+            http,
+            catalog,
+        }
     }
 
     /// The configured worktree base directory.
@@ -125,7 +137,9 @@ impl Engine {
     /// Filesystem-safe worktree directory for `target`, under the configured base.
     pub fn worktree_for(&self, target: &ExecutionTarget) -> PathBuf {
         let model = target.model.as_str().replace(['/', ':', ' ', '\\'], "-");
-        self.config.worktree_base.join(format!("oryn-{}-{}", target.framework, model))
+        self.config
+            .worktree_base
+            .join(format!("oryn-{}-{}", target.framework, model))
     }
 
     /// Build a provider registry: one [`HarnessProvider`] per available spec, each
@@ -185,13 +199,18 @@ impl Engine {
         &self,
         mission: &Mission,
         available: &[ModelSpec],
-        profiles: &std::collections::BTreeMap<crate::orchestrator::provider::ModelId, crate::orchestrator::capability::CapabilityProfile>,
+        profiles: &std::collections::BTreeMap<
+            crate::orchestrator::provider::ModelId,
+            crate::orchestrator::capability::CapabilityProfile,
+        >,
         prefix: &CacheStablePrefix,
     ) -> Result<MissionResult, EngineError> {
         let matrix = resolve_matrix(available, profiles);
         let registry = self.build_registry(available);
         let verifier = self.verifier();
-        Ok(Orchestrator::run(mission, &registry, &matrix, prefix, &verifier)?)
+        Ok(Orchestrator::run(
+            mission, &registry, &matrix, prefix, &verifier,
+        )?)
     }
 }
 
@@ -219,7 +238,10 @@ mod tests {
             } else {
                 r#"{"type":"result","result":"cloud result","usage":{"input_tokens":10,"output_tokens":5}}"#.to_string()
             };
-            Ok(ProcessOutput { stdout_lines: vec![line], exit_code: 0 })
+            Ok(ProcessOutput {
+                stdout_lines: vec![line],
+                exit_code: 0,
+            })
         }
     }
 
@@ -239,36 +261,70 @@ mod tests {
 
     fn spec(framework: AgentFramework, id: &str, pricing: Pricing) -> ModelSpec {
         let kind = if pricing == Pricing::ZERO {
-            ModelKind::Local { endpoint: "http://localhost:11434".into() }
+            ModelKind::Local {
+                endpoint: "http://localhost:11434".into(),
+            }
         } else {
-            ModelKind::Api { provider: "anthropic".into() }
+            ModelKind::Api {
+                provider: "anthropic".into(),
+            }
         };
-        ModelSpec { id: ModelId::new(id), kind, pricing, context_window: 200_000, framework }
+        ModelSpec {
+            id: ModelId::new(id),
+            kind,
+            pricing,
+            context_window: 200_000,
+            framework,
+        }
     }
 
     fn specs() -> Vec<ModelSpec> {
         vec![
             spec(AgentFramework::Local, "local-qwen-coder", Pricing::ZERO),
-            spec(AgentFramework::ClaudeCode, "opus", Pricing { input: 15.0, output: 75.0, cache_read: 1.5, cache_write: 18.75 }),
+            spec(
+                AgentFramework::ClaudeCode,
+                "opus",
+                Pricing {
+                    input: 15.0,
+                    output: 75.0,
+                    cache_read: 1.5,
+                    cache_write: 18.75,
+                },
+            ),
         ]
     }
 
     fn prefix() -> CacheStablePrefix {
-        CacheStablePrefix::builder().system("sys").repo_map("map").task("task").build()
+        CacheStablePrefix::builder()
+            .system("sys")
+            .repo_map("map")
+            .task("task")
+            .build()
     }
 
     fn mission() -> Mission {
         Mission {
             id: "m".into(),
             goal: "g".into(),
-            subtasks: vec![Subtask { id: SubtaskId::new("e"), kind: SubtaskKind::MechanicalEdit, summary: "edit".into(), deps: vec![] }],
+            subtasks: vec![Subtask {
+                id: SubtaskId::new("e"),
+                kind: SubtaskKind::MechanicalEdit,
+                summary: "edit".into(),
+                deps: vec![],
+            }],
         }
     }
 
     fn engine(http: Arc<dyn Http>) -> Engine {
         Engine::new(
-            EngineConfig { advisor: AdvisorConfig::new("http://localhost:11434", "qwen2.5-coder"), worktree_base: PathBuf::from("/wt"), default_auth: AuthMode::Subscription },
-            Arc::new(FakeRunner { cwds: Mutex::new(Vec::new()) }),
+            EngineConfig {
+                advisor: AdvisorConfig::new("http://localhost:11434", "qwen2.5-coder"),
+                worktree_base: PathBuf::from("/wt"),
+                default_auth: AuthMode::Subscription,
+            },
+            Arc::new(FakeRunner {
+                cwds: Mutex::new(Vec::new()),
+            }),
             http,
             CapabilityCatalog::seed(),
         )
@@ -277,7 +333,10 @@ mod tests {
     #[test]
     fn worktree_for_sanitizes_model_name() {
         let e = engine(Arc::new(PassHttp));
-        let wt = e.worktree_for(&ExecutionTarget::new(AgentFramework::ClaudeCode, ModelId::new("opus:4.6")));
+        let wt = e.worktree_for(&ExecutionTarget::new(
+            AgentFramework::ClaudeCode,
+            ModelId::new("opus:4.6"),
+        ));
         assert_eq!(wt, PathBuf::from("/wt/oryn-claude-code-opus-4.6"));
     }
 
@@ -287,7 +346,13 @@ mod tests {
         let reg = e.build_registry(&specs());
         assert_eq!(reg.specs().len(), 2);
         // each resolvable by target
-        assert!(reg.get(&ExecutionTarget::new(AgentFramework::Local, ModelId::new("local-qwen-coder"))).is_some());
+        assert!(
+            reg.get(&ExecutionTarget::new(
+                AgentFramework::Local,
+                ModelId::new("local-qwen-coder")
+            ))
+            .is_some()
+        );
     }
 
     #[test]
@@ -305,8 +370,12 @@ mod tests {
 
     #[test]
     fn run_mission_is_deterministic() {
-        let a = engine(Arc::new(PassHttp)).run_mission(&mission(), &specs(), &prefix()).unwrap();
-        let b = engine(Arc::new(PassHttp)).run_mission(&mission(), &specs(), &prefix()).unwrap();
+        let a = engine(Arc::new(PassHttp))
+            .run_mission(&mission(), &specs(), &prefix())
+            .unwrap();
+        let b = engine(Arc::new(PassHttp))
+            .run_mission(&mission(), &specs(), &prefix())
+            .unwrap();
         assert_eq!(a, b);
     }
 
@@ -318,14 +387,23 @@ mod tests {
         let result = e.run_mission(&mission(), &specs(), &prefix()).unwrap();
         let outcome = &result.outcomes[0];
         assert!(outcome.attempts.iter().all(|a| !a.verdict.passed));
-        assert!(outcome.winner.is_some(), "best-effort winner chosen even when all fail");
+        assert!(
+            outcome.winner.is_some(),
+            "best-effort winner chosen even when all fail"
+        );
     }
 
     #[test]
     fn worktrees_are_under_the_configured_base() {
-        let runner = Arc::new(FakeRunner { cwds: Mutex::new(Vec::new()) });
+        let runner = Arc::new(FakeRunner {
+            cwds: Mutex::new(Vec::new()),
+        });
         let e = Engine::new(
-            EngineConfig { advisor: AdvisorConfig::default(), worktree_base: PathBuf::from("/custom/base"), default_auth: AuthMode::Subscription },
+            EngineConfig {
+                advisor: AdvisorConfig::default(),
+                worktree_base: PathBuf::from("/custom/base"),
+                default_auth: AuthMode::Subscription,
+            },
             runner.clone(),
             Arc::new(PassHttp),
             CapabilityCatalog::seed(),
@@ -339,8 +417,14 @@ mod tests {
     #[test]
     fn config_getters_expose_user_choices() {
         let e = Engine::new(
-            EngineConfig { advisor: AdvisorConfig::new("http://host:9999", "my-model"), worktree_base: PathBuf::from("/wt"), default_auth: AuthMode::Subscription },
-            Arc::new(FakeRunner { cwds: Mutex::new(Vec::new()) }),
+            EngineConfig {
+                advisor: AdvisorConfig::new("http://host:9999", "my-model"),
+                worktree_base: PathBuf::from("/wt"),
+                default_auth: AuthMode::Subscription,
+            },
+            Arc::new(FakeRunner {
+                cwds: Mutex::new(Vec::new()),
+            }),
             Arc::new(PassHttp),
             CapabilityCatalog::seed(),
         );

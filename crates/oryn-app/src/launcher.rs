@@ -31,11 +31,41 @@ impl Adapter {
     /// The frameworks Oryn can drive, mapped to their real CLIs.
     pub fn available() -> Vec<Adapter> {
         vec![
-            Adapter { name: "Claude Code", cli: "claude", color: 0xC08CFF, enabled: true, tag: "subscription" },
-            Adapter { name: "Codex", cli: "codex", color: 0x4ED99A, enabled: true, tag: "subscription" },
-            Adapter { name: "Gemini CLI", cli: "gemini", color: 0x7FA8FF, enabled: true, tag: "keyless" },
-            Adapter { name: "Aider", cli: "aider", color: 0xFFB454, enabled: false, tag: "api key" },
-            Adapter { name: "Cursor Agent", cli: "cursor", color: 0x6AD6E0, enabled: false, tag: "planned" },
+            Adapter {
+                name: "Claude Code",
+                cli: "claude",
+                color: 0xC08CFF,
+                enabled: true,
+                tag: "subscription",
+            },
+            Adapter {
+                name: "Codex",
+                cli: "codex",
+                color: 0x4ED99A,
+                enabled: true,
+                tag: "subscription",
+            },
+            Adapter {
+                name: "Gemini CLI",
+                cli: "gemini",
+                color: 0x7FA8FF,
+                enabled: true,
+                tag: "keyless",
+            },
+            Adapter {
+                name: "Aider",
+                cli: "aider",
+                color: 0xFFB454,
+                enabled: false,
+                tag: "api key",
+            },
+            Adapter {
+                name: "Cursor Agent",
+                cli: "cursor",
+                color: 0x6AD6E0,
+                enabled: false,
+                tag: "planned",
+            },
         ]
     }
 
@@ -97,13 +127,31 @@ impl Root {
                     .border_1()
                     .border_color(overlay(t.overlays.w09))
                     .rounded(px(9.0))
-                    .child(div().text_size(px(12.5)).text_color(solid(t.text.t1)).child(self.repo.label.clone()))
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(solid(t.text.t1))
+                            .child(self.repo.label.clone()),
+                    )
                     .child(div().flex_1())
-                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(format!("{} · {} files", self.repo.base_ref(), self.repo.files.len()))),
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(solid(t.text.t5))
+                            .child(format!(
+                                "{} · {} files",
+                                self.repo.base_ref(),
+                                self.repo.files.len()
+                            )),
+                    ),
             ))
             .child(section(t, "TASK", self.task_editor(cx, t)))
             .child(self.agents_section(cx, t))
-            .child(section(t, "VERIFICATION", advisor_row(t, &self.advisor.endpoint, &self.advisor.model)))
+            .child(section(
+                t,
+                "VERIFICATION",
+                advisor_row(t, &self.advisor.endpoint, &self.advisor.model),
+            ))
             .child(scrub_toggle(self, cx, t))
     }
 
@@ -124,7 +172,10 @@ impl Root {
             .on_click(self.focus_task(cx))
             .child(format!("{}\u{2588}", self.task));
         if let Some(fh) = &self.task_focus {
-            field = field.track_focus(fh).on_key_down(self.task_key(cx)).border_color(tint(t.accent.base, 0.34));
+            field = field
+                .track_focus(fh)
+                .on_key_down(self.task_key(cx))
+                .border_color(tint(t.accent.base, 0.34));
         }
         field.into_any_element()
     }
@@ -149,12 +200,25 @@ impl Root {
                     .items_center()
                     .justify_between()
                     .child(section_label(t, "FRAMEWORKS TO ROUTE ACROSS"))
-                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(format!("{selected} selected · each gets an isolated worktree"))),
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(solid(t.text.t5))
+                            .child(format!(
+                                "{selected} selected · each gets an isolated worktree"
+                            )),
+                    ),
             )
             .child(div().flex().flex_col().gap(px(9.0)).children(rows))
     }
 
-    fn adapter_row(&self, cx: &mut Context<Self>, t: &Theme, idx: usize, a: &Adapter) -> AnyElement {
+    fn adapter_row(
+        &self,
+        cx: &mut Context<Self>,
+        t: &Theme,
+        idx: usize,
+        a: &Adapter,
+    ) -> AnyElement {
         let (bg, border) = if a.enabled {
             (tint(t.accent.base, 0.07), tint(t.accent.base, 0.3))
         } else {
@@ -173,7 +237,9 @@ impl Root {
             .border_1()
             .border_color(border);
         if a.selectable() {
-            row = row.cursor_pointer().on_click(self.on(cx, Msg::ToggleAdapter(idx)));
+            row = row
+                .cursor_pointer()
+                .on_click(self.on(cx, Msg::ToggleAdapter(idx)));
         }
         row.child(
             div()
@@ -185,7 +251,11 @@ impl Root {
                 .border_1()
                 .map(|d| {
                     if a.enabled {
-                        d.bg(solid(t.accent.base)).border_color(solid(t.accent.base)).text_size(px(11.0)).text_color(solid(0x1A0F2E)).child("✓")
+                        d.bg(solid(t.accent.base))
+                            .border_color(solid(t.accent.base))
+                            .text_size(px(11.0))
+                            .text_color(solid(0x1A0F2E))
+                            .child("✓")
                     } else {
                         d.border_color(overlay(t.overlays.w18))
                     }
@@ -197,8 +267,19 @@ impl Root {
                 .flex()
                 .flex_col()
                 .min_w(px(0.0))
-                .child(div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child(a.name))
-                .child(div().text_size(px(10.0)).text_color(solid(t.text.t5)).child(a.cli)),
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(solid(t.text.t1))
+                        .child(a.name),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(solid(t.text.t5))
+                        .child(a.cli),
+                ),
         )
         .child(div().flex_1())
         .child(
@@ -228,11 +309,42 @@ impl Root {
             .border_color(overlay(t.overlays.w09))
             .rounded(px(13.0))
             .p(px(18.0))
-            .child(div().mb(px(16.0)).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child("PLAN"))
-            .child(estimate_row(t, "Frameworks", selected.to_string(), t.text.t1, true))
-            .child(estimate_row(t, "Repo files", self.repo.files.len().to_string(), t.text.t1, true))
-            .child(estimate_row(t, "Routing", "cheapest-capable first".into(), t.status.green, true))
-            .child(estimate_row(t, "Cost", "measured per run".into(), t.text.t1, false))
+            .child(
+                div()
+                    .mb(px(16.0))
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(solid(t.text.t3))
+                    .child("PLAN"),
+            )
+            .child(estimate_row(
+                t,
+                "Frameworks",
+                selected.to_string(),
+                t.text.t1,
+                true,
+            ))
+            .child(estimate_row(
+                t,
+                "Repo files",
+                self.repo.files.len().to_string(),
+                t.text.t1,
+                true,
+            ))
+            .child(estimate_row(
+                t,
+                "Routing",
+                "cheapest-capable first".into(),
+                t.status.green,
+                true,
+            ))
+            .child(estimate_row(
+                t,
+                "Cost",
+                "measured per run".into(),
+                t.text.t1,
+                false,
+            ))
             .child(
                 div()
                     .id("launch")
@@ -250,7 +362,15 @@ impl Root {
                     .on_click(self.launch_run(cx))
                     .child("▸ Launch run"),
             )
-            .child(div().mt(px(9.0)).flex().justify_center().text_size(px(10.5)).text_color(solid(t.text.t6)).child("routes via the real engine"))
+            .child(
+                div()
+                    .mt(px(9.0))
+                    .flex()
+                    .justify_center()
+                    .text_size(px(10.5))
+                    .text_color(solid(t.text.t6))
+                    .child("routes via the real engine"),
+            )
     }
 }
 
@@ -267,14 +387,30 @@ fn advisor_row(t: &Theme, endpoint: &str, model: &str) -> impl IntoElement {
         .border_1()
         .border_color(overlay(t.overlays.w09))
         .rounded(px(9.0))
-        .child(div().size(px(9.0)).rounded(px(3.0)).bg(solid(t.accent.base)))
+        .child(
+            div()
+                .size(px(9.0))
+                .rounded(px(3.0))
+                .bg(solid(t.accent.base)),
+        )
         .child(
             div()
                 .flex()
                 .flex_col()
                 .min_w(px(0.0))
-                .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child(format!("Advisor verifies each result · {model}")))
-                .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(endpoint.to_string())),
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(solid(t.text.t1))
+                        .child(format!("Advisor verifies each result · {model}")),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(solid(t.text.t5))
+                        .child(endpoint.to_string()),
+                ),
         )
 }
 
@@ -289,32 +425,77 @@ fn scrub_toggle(root: &Root, cx: &mut Context<Root>, t: &Theme) -> impl IntoElem
         .border_1()
         .border_color(overlay(t.overlays.w09))
         .rounded(px(9.0))
-        .child(crate::settings::toggle_switch(root, cx, t, "scrub", root.settings.scrub, Msg::ToggleScrub))
+        .child(crate::settings::toggle_switch(
+            root,
+            cx,
+            t,
+            "scrub",
+            root.settings.scrub,
+            Msg::ToggleScrub,
+        ))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child("Scrub secrets before persist"))
-                .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child("redact tokens & keys from raw payloads")),
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(solid(t.text.t1))
+                        .child("Scrub secrets before persist"),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(solid(t.text.t5))
+                        .child("redact tokens & keys from raw payloads"),
+                ),
         )
 }
 
-fn estimate_row(t: &Theme, label: &'static str, value: String, value_color: Rgb, border: bool) -> impl IntoElement {
+fn estimate_row(
+    t: &Theme,
+    label: &'static str,
+    value: String,
+    value_color: Rgb,
+    border: bool,
+) -> impl IntoElement {
     div()
         .flex()
         .justify_between()
         .py(px(9.0))
-        .when(border, |d| d.border_b_1().border_color(overlay(t.overlays.w05)))
-        .child(div().text_size(px(12.0)).text_color(solid(t.text.t3)).child(label))
-        .child(div().text_size(px(12.5)).text_color(solid(value_color)).child(value))
+        .when(border, |d| {
+            d.border_b_1().border_color(overlay(t.overlays.w05))
+        })
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(solid(t.text.t3))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(12.5))
+                .text_color(solid(value_color))
+                .child(value),
+        )
 }
 
 pub(crate) fn section_label(t: &Theme, label: &'static str) -> impl IntoElement {
-    div().text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child(label)
+    div()
+        .text_size(px(10.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(solid(t.text.t3))
+        .child(label)
 }
 
 pub(crate) fn section(t: &Theme, label: &'static str, body: impl IntoElement) -> impl IntoElement {
-    div().flex().flex_col().gap(px(9.0)).child(section_label(t, label)).child(body)
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(9.0))
+        .child(section_label(t, label))
+        .child(body)
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -333,7 +514,10 @@ mod tests {
 
     #[test]
     fn planned_is_not_selectable() {
-        let cursor = Adapter::available().into_iter().find(|a| a.tag == "planned").unwrap();
+        let cursor = Adapter::available()
+            .into_iter()
+            .find(|a| a.tag == "planned")
+            .unwrap();
         assert!(!cursor.selectable());
     }
 

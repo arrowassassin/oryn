@@ -287,7 +287,9 @@ mod tests {
             Self {
                 spec: ModelSpec {
                     id: ModelId::new(id),
-                    kind: ModelKind::Api { provider: "test".into() },
+                    kind: ModelKind::Api {
+                        provider: "test".into(),
+                    },
                     pricing,
                     context_window: 128_000,
                     framework,
@@ -314,7 +316,10 @@ mod tests {
             if self.errors {
                 Err(ProviderError::Unavailable)
             } else {
-                Ok(CompletionResponse { text: self.text.clone(), usage: self.usage })
+                Ok(CompletionResponse {
+                    text: self.text.clone(),
+                    usage: self.usage,
+                })
             }
         }
     }
@@ -336,8 +341,11 @@ mod tests {
 
     impl Verifier for FakeVerifier {
         fn verify(&self, _subtask: &Subtask, response: &CompletionResponse) -> Verdict {
-            let (passed, score) =
-                self.verdicts.get(&response.text).copied().unwrap_or((false, 0.0));
+            let (passed, score) = self
+                .verdicts
+                .get(&response.text)
+                .copied()
+                .unwrap_or((false, 0.0));
             Verdict { passed, score }
         }
     }
@@ -349,11 +357,21 @@ mod tests {
     }
 
     fn usage_with_cache() -> TokenUsage {
-        TokenUsage { input: 1_000, output: 500, cache_read: 4_000, cache_write: 200 }
+        TokenUsage {
+            input: 1_000,
+            output: 500,
+            cache_read: 4_000,
+            cache_write: 200,
+        }
     }
 
     fn anthropic() -> Pricing {
-        Pricing { input: 3.0, output: 15.0, cache_read: 0.30, cache_write: 3.75 }
+        Pricing {
+            input: 3.0,
+            output: 15.0,
+            cache_read: 0.30,
+            cache_write: 3.75,
+        }
     }
 
     fn prefix() -> CacheStablePrefix {
@@ -365,11 +383,20 @@ mod tests {
     }
 
     fn subtask(id: &str, kind: SubtaskKind) -> Subtask {
-        Subtask { id: SubtaskId::new(id), kind, summary: format!("work {id}"), deps: vec![] }
+        Subtask {
+            id: SubtaskId::new(id),
+            kind,
+            summary: format!("work {id}"),
+            deps: vec![],
+        }
     }
 
     fn mission(subtasks: Vec<Subtask>) -> Mission {
-        Mission { id: "m".into(), goal: "g".into(), subtasks }
+        Mission {
+            id: "m".into(),
+            goal: "g".into(),
+            subtasks,
+        }
     }
 
     // ── happy path: cheapest passes ───────────────────────────────────────────
@@ -393,14 +420,19 @@ mod tests {
             usage_with_cache(),
         )));
 
-        let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::Debugging, vec![cheap.clone(), pricey]);
+        let matrix =
+            CapabilityMatrix::new().with(SubtaskKind::Debugging, vec![cheap.clone(), pricey]);
         // The cheap target's text passes.
         let verifier = FakeVerifier::new(&[("local/qwen", true, 0.7)]);
 
-        let result =
-            Orchestrator::run(&mission(vec![subtask("s", SubtaskKind::Debugging)]), &reg, &matrix, &prefix(), &verifier)
-                .unwrap();
+        let result = Orchestrator::run(
+            &mission(vec![subtask("s", SubtaskKind::Debugging)]),
+            &reg,
+            &matrix,
+            &prefix(),
+            &verifier,
+        )
+        .unwrap();
 
         assert_eq!(result.outcomes.len(), 1);
         let o = &result.outcomes[0];
@@ -438,9 +470,14 @@ mod tests {
         let verifier =
             FakeVerifier::new(&[("local/qwen", false, 0.3), ("claude-code/opus", true, 0.9)]);
 
-        let result =
-            Orchestrator::run(&mission(vec![subtask("s", SubtaskKind::Debugging)]), &reg, &matrix, &prefix(), &verifier)
-                .unwrap();
+        let result = Orchestrator::run(
+            &mission(vec![subtask("s", SubtaskKind::Debugging)]),
+            &reg,
+            &matrix,
+            &prefix(),
+            &verifier,
+        )
+        .unwrap();
 
         let o = &result.outcomes[0];
         assert_eq!(o.attempts.len(), 2, "escalation must be recorded");
@@ -473,17 +510,21 @@ mod tests {
             )));
         }
 
-        let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::Refactor, vec![a, b.clone(), c]);
+        let matrix = CapabilityMatrix::new().with(SubtaskKind::Refactor, vec![a, b.clone(), c]);
         let verifier = FakeVerifier::new(&[
             ("local/a", false, 0.2),
             ("local/b", false, 0.5),
             ("local/c", false, 0.5),
         ]);
 
-        let result =
-            Orchestrator::run(&mission(vec![subtask("s", SubtaskKind::Refactor)]), &reg, &matrix, &prefix(), &verifier)
-                .unwrap();
+        let result = Orchestrator::run(
+            &mission(vec![subtask("s", SubtaskKind::Refactor)]),
+            &reg,
+            &matrix,
+            &prefix(),
+            &verifier,
+        )
+        .unwrap();
 
         let o = &result.outcomes[0];
         assert_eq!(o.attempts.len(), 3, "all candidates tried when none pass");
@@ -501,13 +542,19 @@ mod tests {
             target: target(AgentFramework::ClaudeCode, "a"),
             tier_rank: 0,
             usage: TokenUsage::default(),
-            verdict: Verdict { passed: false, score: 0.5 },
+            verdict: Verdict {
+                passed: false,
+                score: 0.5,
+            },
         };
         let hi = Attempt {
             target: target(AgentFramework::Codex, "a"),
             tier_rank: 0,
             usage: TokenUsage::default(),
-            verdict: Verdict { passed: false, score: 0.5 },
+            verdict: Verdict {
+                passed: false,
+                score: 0.5,
+            },
         };
         // ClaudeCode < Codex, so the ClaudeCode attempt (index 0) must win.
         assert_eq!(best_attempt(&[lo, hi]), 0);
@@ -539,10 +586,8 @@ mod tests {
             .with(SubtaskKind::Debugging, vec![cheap.clone(), pricey])
             .with(SubtaskKind::TestGen, vec![cheap]);
         // For the Debugging mission, local fails and opus passes (escalation).
-        let verifier = FakeVerifier::new(&[
-            ("local/qwen", false, 0.3),
-            ("claude-code/opus", true, 0.9),
-        ]);
+        let verifier =
+            FakeVerifier::new(&[("local/qwen", false, 0.3), ("claude-code/opus", true, 0.9)]);
         // For the TestGen mission, the cheap local target passes outright.
         let verifier_pass = FakeVerifier::new(&[("local/qwen", true, 0.8)]);
 
@@ -557,7 +602,10 @@ mod tests {
         .unwrap();
         // Two attempts ran: local (free) + opus (priced) → positive gross + savings.
         assert!(r1.spend.gross_usd > 0.0);
-        assert!(r1.spend.saved_usd > 0.0, "cache_write/read imply positive savings");
+        assert!(
+            r1.spend.saved_usd > 0.0,
+            "cache_write/read imply positive savings"
+        );
 
         // TestGen mission (cheap passes): only the free local provider charged.
         let r2 = Orchestrator::run(
@@ -595,8 +643,7 @@ mod tests {
             reg
         };
 
-        let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::Debugging, vec![cheap, pricey]);
+        let matrix = CapabilityMatrix::new().with(SubtaskKind::Debugging, vec![cheap, pricey]);
         let verifier =
             FakeVerifier::new(&[("local/qwen", false, 0.3), ("claude-code/opus", true, 0.9)]);
         let m = mission(vec![
@@ -628,13 +675,18 @@ mod tests {
             usage_with_cache(),
         )));
 
-        let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::Debugging, vec![missing, real.clone()]);
+        let matrix =
+            CapabilityMatrix::new().with(SubtaskKind::Debugging, vec![missing, real.clone()]);
         let verifier = FakeVerifier::new(&[("claude-code/opus", true, 0.9)]);
 
-        let result =
-            Orchestrator::run(&mission(vec![subtask("s", SubtaskKind::Debugging)]), &reg, &matrix, &prefix(), &verifier)
-                .unwrap();
+        let result = Orchestrator::run(
+            &mission(vec![subtask("s", SubtaskKind::Debugging)]),
+            &reg,
+            &matrix,
+            &prefix(),
+            &verifier,
+        )
+        .unwrap();
 
         let o = &result.outcomes[0];
         assert_eq!(o.attempts.len(), 1, "missing target produces no attempt");
@@ -649,7 +701,10 @@ mod tests {
         let good = target(AgentFramework::ClaudeCode, "opus");
 
         let mut reg = ProviderRegistry::new();
-        reg.register(Box::new(FakeProvider::erroring(AgentFramework::Local, "broken")));
+        reg.register(Box::new(FakeProvider::erroring(
+            AgentFramework::Local,
+            "broken",
+        )));
         reg.register(Box::new(FakeProvider::new(
             AgentFramework::ClaudeCode,
             "opus",
@@ -657,13 +712,17 @@ mod tests {
             usage_with_cache(),
         )));
 
-        let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::Debugging, vec![bad, good.clone()]);
+        let matrix = CapabilityMatrix::new().with(SubtaskKind::Debugging, vec![bad, good.clone()]);
         let verifier = FakeVerifier::new(&[("claude-code/opus", true, 0.9)]);
 
-        let result =
-            Orchestrator::run(&mission(vec![subtask("s", SubtaskKind::Debugging)]), &reg, &matrix, &prefix(), &verifier)
-                .unwrap();
+        let result = Orchestrator::run(
+            &mission(vec![subtask("s", SubtaskKind::Debugging)]),
+            &reg,
+            &matrix,
+            &prefix(),
+            &verifier,
+        )
+        .unwrap();
 
         let o = &result.outcomes[0];
         assert_eq!(o.attempts.len(), 1, "erroring provider makes no attempt");
@@ -695,8 +754,10 @@ mod tests {
     #[test]
     fn all_targets_missing_yields_no_candidates() {
         let reg = ProviderRegistry::new(); // nothing registered
-        let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::Debugging, vec![target(AgentFramework::Local, "x")]);
+        let matrix = CapabilityMatrix::new().with(
+            SubtaskKind::Debugging,
+            vec![target(AgentFramework::Local, "x")],
+        );
         let verifier = FakeVerifier::new(&[]);
 
         let err = Orchestrator::run(
@@ -748,7 +809,10 @@ mod tests {
 
     #[test]
     fn verdict_is_copy_and_eq_by_value() {
-        let v = Verdict { passed: true, score: 0.5 };
+        let v = Verdict {
+            passed: true,
+            score: 0.5,
+        };
         let w = v;
         assert_eq!(v, w);
     }

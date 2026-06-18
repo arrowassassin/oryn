@@ -112,7 +112,12 @@ mod tests {
     #[test]
     fn cost_event_charges_budget_by_total() {
         let mut s = SessionState::new("s1", Some(10_000));
-        let usage = TokenUsage { input: 1000, output: 200, cache_read: 50, cache_write: 5 };
+        let usage = TokenUsage {
+            input: 1000,
+            output: 200,
+            cache_read: 50,
+            cache_write: 5,
+        };
         s.on_event(cost_event(Some(usage), Some(0.01)));
         assert_eq!(s.budget.spent(), 1255);
         assert_eq!(s.cost_usd, 0.01);
@@ -130,7 +135,10 @@ mod tests {
     #[test]
     fn exceeding_budget_requests_stop() {
         let mut s = SessionState::new("s1", Some(1000));
-        let usage = TokenUsage { input: 1500, ..Default::default() };
+        let usage = TokenUsage {
+            input: 1500,
+            ..Default::default()
+        };
         s.on_event(cost_event(Some(usage), None));
         assert!(s.budget.exceeded());
         assert!(s.stop_requested);
@@ -172,13 +180,22 @@ mod tests {
     #[test]
     fn timeline_preserves_order() {
         let mut s = SessionState::new("s1", None);
-        s.on_event(AgentEvent::new("claude", "s1", EventKind::SessionStart, "{}"));
+        s.on_event(AgentEvent::new(
+            "claude",
+            "s1",
+            EventKind::SessionStart,
+            "{}",
+        ));
         s.on_event(AgentEvent::new("claude", "s1", EventKind::ToolUse, "{}"));
         s.on_event(AgentEvent::new("claude", "s1", EventKind::ToolResult, "{}"));
         let kinds: Vec<_> = s.timeline.iter().map(|e| e.kind).collect();
         assert_eq!(
             kinds,
-            vec![EventKind::SessionStart, EventKind::ToolUse, EventKind::ToolResult]
+            vec![
+                EventKind::SessionStart,
+                EventKind::ToolUse,
+                EventKind::ToolResult
+            ]
         );
     }
 }

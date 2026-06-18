@@ -200,7 +200,12 @@ impl WorktreeManager {
                 }
                 None => String::new(),
             };
-            files.push(FileDiff { path, old_path, status, patch });
+            files.push(FileDiff {
+                path,
+                old_path,
+                status,
+                patch,
+            });
         }
         Ok(WorktreeDiff { files })
     }
@@ -264,7 +269,8 @@ mod tests {
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
         let sig = git2::Signature::now("test", "test@example.com").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "seed", &tree, &[]).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "seed", &tree, &[])
+            .unwrap();
     }
 
     struct Fixture {
@@ -278,7 +284,11 @@ mod tests {
         let base = tempfile::tempdir().unwrap();
         init_repo_with_commit(repo.path());
         let mgr = WorktreeManager::new(repo.path(), base.path());
-        Fixture { _repo: repo, _base: base, mgr }
+        Fixture {
+            _repo: repo,
+            _base: base,
+            mgr,
+        }
     }
 
     fn file<'a>(d: &'a WorktreeDiff, name: &str) -> &'a FileDiff {
@@ -413,9 +423,15 @@ mod tests {
             );
         }
         // Absolute path and 65 chars also rejected.
-        assert!(matches!(fx.mgr.create("/abs"), Err(WorktreeError::InvalidSessionId)));
+        assert!(matches!(
+            fx.mgr.create("/abs"),
+            Err(WorktreeError::InvalidSessionId)
+        ));
         let too_long = "a".repeat(65);
-        assert!(matches!(fx.mgr.create(&too_long), Err(WorktreeError::InvalidSessionId)));
+        assert!(matches!(
+            fx.mgr.create(&too_long),
+            Err(WorktreeError::InvalidSessionId)
+        ));
     }
 
     #[test]
@@ -432,15 +448,24 @@ mod tests {
         let not_repo = tempfile::tempdir().unwrap();
         let base = tempfile::tempdir().unwrap();
         let mgr = WorktreeManager::new(not_repo.path(), base.path());
-        assert!(matches!(mgr.create("x").unwrap_err(), WorktreeError::Git(_)));
+        assert!(matches!(
+            mgr.create("x").unwrap_err(),
+            WorktreeError::Git(_)
+        ));
     }
 
     #[test]
     fn diff_on_non_repo_is_git_error() {
         let not_repo = tempfile::tempdir().unwrap();
         let mgr = WorktreeManager::new(not_repo.path(), not_repo.path());
-        assert!(matches!(mgr.diff(not_repo.path()).unwrap_err(), WorktreeError::Git(_)));
-        assert!(matches!(mgr.diff_text(not_repo.path()).unwrap_err(), WorktreeError::Git(_)));
+        assert!(matches!(
+            mgr.diff(not_repo.path()).unwrap_err(),
+            WorktreeError::Git(_)
+        ));
+        assert!(matches!(
+            mgr.diff_text(not_repo.path()).unwrap_err(),
+            WorktreeError::Git(_)
+        ));
     }
 
     #[test]

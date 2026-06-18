@@ -154,10 +154,7 @@ mod tests {
     fn sample_prefix() -> CacheStablePrefix {
         CacheStablePrefix::builder()
             .system("You are a senior Rust engineer.")
-            .repo_map(repo_map_from(&[
-                "src/main.rs".into(),
-                "src/lib.rs".into(),
-            ]))
+            .repo_map(repo_map_from(&["src/main.rs".into(), "src/lib.rs".into()]))
             .task("Refactor the event loop to use async/await.")
             .build()
     }
@@ -231,11 +228,7 @@ mod tests {
 
     #[test]
     fn repo_map_from_sorts_paths() {
-        let map = repo_map_from(&[
-            "src/z.rs".into(),
-            "src/a.rs".into(),
-            "src/m.rs".into(),
-        ]);
+        let map = repo_map_from(&["src/z.rs".into(), "src/a.rs".into(), "src/m.rs".into()]);
         assert_eq!(map, "src/a.rs\nsrc/m.rs\nsrc/z.rs");
     }
 
@@ -294,9 +287,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "`task` already set")]
     fn builder_panics_on_double_task() {
-        let _ = CacheStablePrefix::builder()
-            .task("first")
-            .task("second");
+        let _ = CacheStablePrefix::builder().task("first").task("second");
     }
 
     #[test]

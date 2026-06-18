@@ -36,16 +36,25 @@ struct ScriptedRunner {
 }
 
 impl ProcessRunner for ScriptedRunner {
-    fn run(&self, inv: &oryn_core::orchestrator::harness::HarnessInvocation) -> Result<ProcessOutput, RunError> {
+    fn run(
+        &self,
+        inv: &oryn_core::orchestrator::harness::HarnessInvocation,
+    ) -> Result<ProcessOutput, RunError> {
         self.programs_run.lock().unwrap().push(inv.program.clone());
         let line = if inv.program == "ollama" {
             // `ollama run <model>` → plain text
-            format!("{} completed the task", inv.args.get(1).cloned().unwrap_or_default())
+            format!(
+                "{} completed the task",
+                inv.args.get(1).cloned().unwrap_or_default()
+            )
         } else {
             // Claude-style stream-json result frame
             r#"{"type":"result","result":"patched the refresh race","usage":{"input_tokens":1200,"output_tokens":300,"cache_read_input_tokens":8000}}"#.to_string()
         };
-        Ok(ProcessOutput { stdout_lines: vec![line], exit_code: 0 })
+        Ok(ProcessOutput {
+            stdout_lines: vec![line],
+            exit_code: 0,
+        })
     }
 }
 
@@ -60,11 +69,21 @@ impl Http for PassHttp {
 
 fn spec(framework: AgentFramework, id: &str, pricing: Pricing) -> ModelSpec {
     let kind = if pricing == Pricing::ZERO {
-        ModelKind::Local { endpoint: "http://localhost:11434".into() }
+        ModelKind::Local {
+            endpoint: "http://localhost:11434".into(),
+        }
     } else {
-        ModelKind::Api { provider: "anthropic".into() }
+        ModelKind::Api {
+            provider: "anthropic".into(),
+        }
     };
-    ModelSpec { id: ModelId::new(id), kind, pricing, context_window: 200_000, framework }
+    ModelSpec {
+        id: ModelId::new(id),
+        kind,
+        pricing,
+        context_window: 200_000,
+        framework,
+    }
 }
 
 fn prefix() -> CacheStablePrefix {
@@ -83,7 +102,12 @@ fn deterministic_route_drives_real_harness_command_and_advisor() {
     let opus = spec(
         AgentFramework::ClaudeCode,
         "opus",
-        Pricing { input: 15.0, output: 75.0, cache_read: 1.5, cache_write: 18.75 },
+        Pricing {
+            input: 15.0,
+            output: 75.0,
+            cache_read: 1.5,
+            cache_write: 18.75,
+        },
     );
     let available = vec![local.clone(), opus.clone()];
 
@@ -93,11 +117,16 @@ fn deterministic_route_drives_real_harness_command_and_advisor() {
     // For MechanicalEdit the local model clears the bar and is free → it leads the
     // tier; the cascade should stop on it.
     let tier = matrix.tier(SubtaskKind::MechanicalEdit);
-    assert_eq!(tier[0], ExecutionTarget::new(AgentFramework::Local, ModelId::new("local-qwen-coder")));
+    assert_eq!(
+        tier[0],
+        ExecutionTarget::new(AgentFramework::Local, ModelId::new("local-qwen-coder"))
+    );
 
     // Build a registry of *real* HarnessProviders, each backed by the scripted
     // runner (a faked subprocess). Each gets its own worktree path.
-    let runner = Arc::new(ScriptedRunner { programs_run: Mutex::new(Vec::new()) });
+    let runner = Arc::new(ScriptedRunner {
+        programs_run: Mutex::new(Vec::new()),
+    });
     let mut registry = ProviderRegistry::new();
     for s in [&local, &opus] {
         registry.register(Box::new(HarnessProvider::new(
@@ -110,8 +139,15 @@ fn deterministic_route_drives_real_harness_command_and_advisor() {
 
     // The verifier is the local advisor (faked HTTP), with a deny fallback.
     let verifier = AdvisorVerifier::new(
-        OllamaAdvisor::new("http://localhost:11434", "qwen2.5-coder", Arc::new(PassHttp)),
-        Verdict { passed: false, score: 0.0 },
+        OllamaAdvisor::new(
+            "http://localhost:11434",
+            "qwen2.5-coder",
+            Arc::new(PassHttp),
+        ),
+        Verdict {
+            passed: false,
+            score: 0.0,
+        },
     );
 
     let mission = Mission {
@@ -130,7 +166,11 @@ fn deterministic_route_drives_real_harness_command_and_advisor() {
     // Routed to the cheapest-capable target, one attempt (advisor passed), winner
     // is the local model — and the runner actually launched `ollama`.
     let outcome = &result.outcomes[0];
-    assert_eq!(outcome.attempts.len(), 1, "advisor passed the cheap tier → no escalation");
+    assert_eq!(
+        outcome.attempts.len(),
+        1,
+        "advisor passed the cheap tier → no escalation"
+    );
     assert_eq!(
         outcome.winner.as_ref().unwrap(),
         &ExecutionTarget::new(AgentFramework::Local, ModelId::new("local-qwen-coder"))
@@ -138,10 +178,16 @@ fn deterministic_route_drives_real_harness_command_and_advisor() {
     assert_eq!(outcome.response_text, "local-qwen-coder completed the task");
 
     let programs = runner.programs_run.lock().unwrap().clone();
-    assert_eq!(programs, vec!["ollama".to_string()], "the local harness CLI was invoked");
+    assert_eq!(
+        programs,
+        vec!["ollama".to_string()],
+        "the local harness CLI was invoked"
+    );
 
     // Determinism: same inputs → identical result (fresh runner, same script).
-    let runner2 = Arc::new(ScriptedRunner { programs_run: Mutex::new(Vec::new()) });
+    let runner2 = Arc::new(ScriptedRunner {
+        programs_run: Mutex::new(Vec::new()),
+    });
     let mut registry2 = ProviderRegistry::new();
     for s in [&local, &opus] {
         registry2.register(Box::new(HarnessProvider::new(
@@ -175,12 +221,19 @@ fn advisor_failure_escalates_to_the_next_target() {
     let opus = spec(
         AgentFramework::ClaudeCode,
         "opus",
-        Pricing { input: 15.0, output: 75.0, cache_read: 1.5, cache_write: 18.75 },
+        Pricing {
+            input: 15.0,
+            output: 75.0,
+            cache_read: 1.5,
+            cache_write: 18.75,
+        },
     );
     let available = vec![local.clone(), opus.clone()];
     let matrix = resolve_matrix(&available, &CapabilityCatalog::seed().profiles);
 
-    let runner = Arc::new(ScriptedRunner { programs_run: Mutex::new(Vec::new()) });
+    let runner = Arc::new(ScriptedRunner {
+        programs_run: Mutex::new(Vec::new()),
+    });
     let mut registry = ProviderRegistry::new();
     for s in [&local, &opus] {
         registry.register(Box::new(HarnessProvider::new(
@@ -191,8 +244,15 @@ fn advisor_failure_escalates_to_the_next_target() {
         )));
     }
     let verifier = AdvisorVerifier::new(
-        OllamaAdvisor::new("http://localhost:11434", "qwen2.5-coder", Arc::new(GatedHttp)),
-        Verdict { passed: false, score: 0.0 },
+        OllamaAdvisor::new(
+            "http://localhost:11434",
+            "qwen2.5-coder",
+            Arc::new(GatedHttp),
+        ),
+        Verdict {
+            passed: false,
+            score: 0.0,
+        },
     );
 
     let mission = Mission {
@@ -208,7 +268,13 @@ fn advisor_failure_escalates_to_the_next_target() {
     let result = Orchestrator::run(&mission, &registry, &matrix, &prefix(), &verifier).unwrap();
     let outcome = &result.outcomes[0];
     assert_eq!(outcome.attempts.len(), 2, "local fails → escalate to cloud");
-    assert_eq!(outcome.winner.as_ref().unwrap().framework, AgentFramework::ClaudeCode);
+    assert_eq!(
+        outcome.winner.as_ref().unwrap().framework,
+        AgentFramework::ClaudeCode
+    );
     // Both harness CLIs were launched, cheapest first.
-    assert_eq!(runner.programs_run.lock().unwrap().clone(), vec!["ollama".to_string(), "claude".to_string()]);
+    assert_eq!(
+        runner.programs_run.lock().unwrap().clone(),
+        vec!["ollama".to_string(), "claude".to_string()]
+    );
 }

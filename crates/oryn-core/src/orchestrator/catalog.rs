@@ -83,13 +83,18 @@ pub struct DimensionWeights {
 impl DimensionWeights {
     /// An empty weighting (every kind maps to nothing).
     pub fn new() -> Self {
-        Self { by_kind: BTreeMap::new() }
+        Self {
+            by_kind: BTreeMap::new(),
+        }
     }
 
     /// Builder: add a `weight` for `dimension` under `kind`.
     #[must_use]
     pub fn with(mut self, kind: SubtaskKind, dimension: impl Into<String>, weight: f64) -> Self {
-        self.by_kind.entry(kind).or_default().insert(dimension.into(), weight);
+        self.by_kind
+            .entry(kind)
+            .or_default()
+            .insert(dimension.into(), weight);
         self
     }
 
@@ -169,7 +174,8 @@ pub fn map_benchmarks(
 /// extra fields and unknown entries (skipped), never panicking on drift.
 pub fn parse_scored_list(body: &str, dimension: &str) -> Result<RawBenchmarks, SourceError> {
     use serde_json::Value;
-    let root: Value = serde_json::from_str(body).map_err(|e| SourceError::Malformed(e.to_string()))?;
+    let root: Value =
+        serde_json::from_str(body).map_err(|e| SourceError::Malformed(e.to_string()))?;
     let rows = root
         .as_array()
         .or_else(|| root.get("data").and_then(Value::as_array))
@@ -368,10 +374,16 @@ mod tests {
 
     impl FakeSource {
         fn ok(id: &str, raw: RawBenchmarks) -> Self {
-            Self { id: id.to_string(), result: Ok(raw) }
+            Self {
+                id: id.to_string(),
+                result: Ok(raw),
+            }
         }
         fn failing(id: &str) -> Self {
-            Self { id: id.to_string(), result: Err(()) }
+            Self {
+                id: id.to_string(),
+                result: Err(()),
+            }
         }
     }
 
@@ -395,11 +407,19 @@ mod tests {
         let mut m = BTreeMap::new();
         m.insert(
             ModelId::new("strong-aider"),
-            metrics(&[("aider-polyglot", 0.9), ("swe-bench", 0.5), ("long-context", 0.6)]),
+            metrics(&[
+                ("aider-polyglot", 0.9),
+                ("swe-bench", 0.5),
+                ("long-context", 0.6),
+            ]),
         );
         m.insert(
             ModelId::new("weak-aider"),
-            metrics(&[("aider-polyglot", 0.2), ("swe-bench", 0.5), ("long-context", 0.6)]),
+            metrics(&[
+                ("aider-polyglot", 0.2),
+                ("swe-bench", 0.5),
+                ("long-context", 0.6),
+            ]),
         );
         RawBenchmarks { metrics: m }
     }
@@ -427,7 +447,10 @@ mod tests {
         let profiles = map_benchmarks(&raw_two_models(), &default_weights());
         let strong = profiles[&ModelId::new("strong-aider")].score(SubtaskKind::DiffEdit);
         let weak = profiles[&ModelId::new("weak-aider")].score(SubtaskKind::DiffEdit);
-        assert!(strong > weak, "aider-strong ({strong}) must outrank aider-weak ({weak}) on DiffEdit");
+        assert!(
+            strong > weak,
+            "aider-strong ({strong}) must outrank aider-weak ({weak}) on DiffEdit"
+        );
         // DiffEdit = 0.8*aider + 0.2*swe, normalized by total weight 1.0.
         approx(strong, 0.8 * 0.9 + 0.2 * 0.5);
         approx(weak, 0.8 * 0.2 + 0.2 * 0.5);
@@ -437,24 +460,27 @@ mod tests {
     fn map_benchmarks_single_dimension_passthrough() {
         // MechanicalEdit = 1.0 * aider-polyglot, so score == the raw metric.
         let profiles = map_benchmarks(&raw_two_models(), &default_weights());
-        approx(profiles[&ModelId::new("strong-aider")].score(SubtaskKind::MechanicalEdit), 0.9);
+        approx(
+            profiles[&ModelId::new("strong-aider")].score(SubtaskKind::MechanicalEdit),
+            0.9,
+        );
     }
 
     #[test]
     fn map_benchmarks_normalizes_by_total_weight() {
         // Two equal-weight dimensions → plain average.
         let raw = RawBenchmarks {
-            metrics: BTreeMap::from([(
-                ModelId::new("m"),
-                metrics(&[("a", 1.0), ("b", 0.0)]),
-            )]),
+            metrics: BTreeMap::from([(ModelId::new("m"), metrics(&[("a", 1.0), ("b", 0.0)]))]),
         };
         let weights = DimensionWeights::new()
             .with(SubtaskKind::Refactor, "a", 2.0)
             .with(SubtaskKind::Refactor, "b", 2.0);
         let profiles = map_benchmarks(&raw, &weights);
         // (2*1.0 + 2*0.0) / 4 = 0.5
-        approx(profiles[&ModelId::new("m")].score(SubtaskKind::Refactor), 0.5);
+        approx(
+            profiles[&ModelId::new("m")].score(SubtaskKind::Refactor),
+            0.5,
+        );
     }
 
     #[test]
@@ -464,7 +490,10 @@ mod tests {
         };
         let weights = DimensionWeights::new().with(SubtaskKind::Debugging, "a", 1.0);
         let profiles = map_benchmarks(&raw, &weights);
-        approx(profiles[&ModelId::new("m")].score(SubtaskKind::Debugging), 1.0);
+        approx(
+            profiles[&ModelId::new("m")].score(SubtaskKind::Debugging),
+            1.0,
+        );
     }
 
     #[test]
@@ -474,7 +503,10 @@ mod tests {
             metrics: BTreeMap::from([(ModelId::new("m"), metrics(&[("aider-polyglot", 0.9)]))]),
         };
         let profiles = map_benchmarks(&raw, &default_weights());
-        approx(profiles[&ModelId::new("m")].score(SubtaskKind::Debugging), 0.0);
+        approx(
+            profiles[&ModelId::new("m")].score(SubtaskKind::Debugging),
+            0.0,
+        );
     }
 
     #[test]
@@ -497,7 +529,11 @@ mod tests {
         };
         let weights = DimensionWeights::new().with(SubtaskKind::Refactor, "a", 0.0);
         let profiles = map_benchmarks(&raw, &weights);
-        assert!(!profiles[&ModelId::new("m")].scores.contains_key(&SubtaskKind::Refactor));
+        assert!(
+            !profiles[&ModelId::new("m")]
+                .scores
+                .contains_key(&SubtaskKind::Refactor)
+        );
     }
 
     #[test]
@@ -543,8 +579,15 @@ mod tests {
         // Make available specs for both benchmarked models.
         let spec = |id: &str| ModelSpec {
             id: ModelId::new(id),
-            kind: ModelKind::Api { provider: "test".into() },
-            pricing: Pricing { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 },
+            kind: ModelKind::Api {
+                provider: "test".into(),
+            },
+            pricing: Pricing {
+                input: 3.0,
+                output: 15.0,
+                cache_read: 0.3,
+                cache_write: 3.75,
+            },
             context_window: 128_000,
             framework: AgentFramework::ClaudeCode,
         };
@@ -553,7 +596,11 @@ mod tests {
         let matrix = resolve_matrix(&available, &cat.profiles);
         let diff_tier = matrix.tier(SubtaskKind::DiffEdit);
         // strong-aider clears MIN_CAPABILITY on DiffEdit (0.82); weak-aider (0.26) does not.
-        assert_eq!(diff_tier.len(), 1, "only the aider-strong model clears the bar");
+        assert_eq!(
+            diff_tier.len(),
+            1,
+            "only the aider-strong model clears the bar"
+        );
         assert_eq!(diff_tier[0].model, ModelId::new("strong-aider"));
     }
 
@@ -562,7 +609,9 @@ mod tests {
         let cat = CapabilityCatalog::seed();
         let spec = |id: &str| ModelSpec {
             id: ModelId::new(id),
-            kind: ModelKind::Api { provider: "test".into() },
+            kind: ModelKind::Api {
+                provider: "test".into(),
+            },
             pricing: Pricing::ZERO,
             context_window: 128_000,
             framework: AgentFramework::ClaudeCode,
@@ -579,7 +628,10 @@ mod tests {
 
     #[test]
     fn source_error_displays() {
-        assert_eq!(SourceError::Unavailable.to_string(), "capability source unavailable");
+        assert_eq!(
+            SourceError::Unavailable.to_string(),
+            "capability source unavailable"
+        );
         assert_eq!(
             SourceError::Malformed("bad json".into()).to_string(),
             "malformed benchmark payload: bad json"
@@ -590,7 +642,10 @@ mod tests {
     fn default_weights_covers_all_kinds() {
         let w = default_weights();
         for kind in SubtaskKind::ALL {
-            assert!(w.for_kind(kind).is_some(), "kind {kind:?} must have weights");
+            assert!(
+                w.for_kind(kind).is_some(),
+                "kind {kind:?} must have weights"
+            );
         }
     }
 
@@ -625,7 +680,10 @@ mod tests {
             "aider-polyglot",
         )
         .unwrap();
-        approx(raw.metrics[&ModelId::new("gemini-2.5-pro")]["aider-polyglot"], 0.75);
+        approx(
+            raw.metrics[&ModelId::new("gemini-2.5-pro")]["aider-polyglot"],
+            0.75,
+        );
     }
 
     #[test]
@@ -633,7 +691,10 @@ mod tests {
         let raw = parse_scored_list(r#"[{"model":"opus","score":0.9}]"#, "aider-polyglot").unwrap();
         let profiles = map_benchmarks(&raw, &default_weights());
         // MechanicalEdit = 1.0 * aider-polyglot → 0.9
-        approx(profiles[&ModelId::new("opus")].score(SubtaskKind::MechanicalEdit), 0.9);
+        approx(
+            profiles[&ModelId::new("opus")].score(SubtaskKind::MechanicalEdit),
+            0.9,
+        );
     }
 
     #[test]
@@ -658,8 +719,14 @@ mod tests {
   pass_rate_2: 33.3
 ";
         let raw = parse_aider_leaderboard(yaml).unwrap();
-        approx(raw.metrics[&ModelId::new("claude-3.5-sonnet")]["aider-polyglot"], 0.842);
-        approx(raw.metrics[&ModelId::new("gpt-4o")]["aider-polyglot"], 0.333);
+        approx(
+            raw.metrics[&ModelId::new("claude-3.5-sonnet")]["aider-polyglot"],
+            0.842,
+        );
+        approx(
+            raw.metrics[&ModelId::new("gpt-4o")]["aider-polyglot"],
+            0.333,
+        );
     }
 
     #[test]

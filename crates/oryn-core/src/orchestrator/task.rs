@@ -52,18 +52,7 @@ impl fmt::Display for SubtaskId {
 /// Used by the scheduler to route each subtask to the most appropriate agent
 /// slot. Derives `Ord` so it can serve as a `BTreeMap` key in later pipeline
 /// stages.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubtaskKind {
     /// Straightforward textual or structural edits with no logic change.
@@ -324,10 +313,7 @@ mod tests {
                 simple_subtask("b", SubtaskKind::Refactor, vec![]),
             ],
         };
-        assert_eq!(
-            m.topo_order().unwrap(),
-            vec![id("a"), id("b"), id("c")],
-        );
+        assert_eq!(m.topo_order().unwrap(), vec![id("a"), id("b"), id("c")],);
     }
 
     // -- topo_order: diamond dependency ------------------------------------

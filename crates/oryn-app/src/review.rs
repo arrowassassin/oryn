@@ -39,14 +39,18 @@ impl Root {
                 .flex()
                 .flex_col()
                 .min_h(px(0.0))
-                .child(crate::view_header(&t, "REVIEW & PROMOTE", "Compare the field"))
+                .child(crate::view_header(
+                    &t,
+                    "REVIEW & PROMOTE",
+                    "Compare the field",
+                ))
                 .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(div().text_size(px(12.5)).text_color(solid(t.text.t4)).child(self.status_summary())),
+                    div().flex_1().flex().items_center().justify_center().child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(solid(t.text.t4))
+                            .child(self.status_summary()),
+                    ),
                 )
                 .into_any_element();
         }
@@ -66,7 +70,11 @@ impl Root {
             .flex()
             .flex_col()
             .min_h(px(0.0))
-            .child(crate::view_header(&t, "REVIEW & PROMOTE", "Compare the field"))
+            .child(crate::view_header(
+                &t,
+                "REVIEW & PROMOTE",
+                "Compare the field",
+            ))
             .child(
                 div()
                     .flex_1()
@@ -83,7 +91,14 @@ impl Root {
             .into_any_element()
     }
 
-    fn review_row(&self, cx: &mut Context<Self>, t: &Theme, rank: usize, idx: usize, recommended: bool) -> AnyElement {
+    fn review_row(
+        &self,
+        cx: &mut Context<Self>,
+        t: &Theme,
+        rank: usize,
+        idx: usize,
+        recommended: bool,
+    ) -> AnyElement {
         let a = &self.agents[idx];
         let selected = idx == self.selected;
         let border = if recommended {
@@ -106,7 +121,13 @@ impl Root {
             .rounded(px(11.0))
             .cursor_pointer()
             .on_click(self.on(cx, Msg::SelectAgent(idx)))
-            .child(div().w(px(18.0)).text_size(px(12.0)).text_color(solid(t.text.t5)).child(format!("{}", rank + 1)))
+            .child(
+                div()
+                    .w(px(18.0))
+                    .text_size(px(12.0))
+                    .text_color(solid(t.text.t5))
+                    .child(format!("{}", rank + 1)),
+            )
             .child(dot(px(9.0), a.color))
             .child(
                 div()
@@ -118,14 +139,45 @@ impl Root {
                             .flex()
                             .items_center()
                             .gap(px(7.0))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(13.0)).text_color(solid(t.text.t1)).child(a.framework.clone()))
-                            .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(a.model.clone()))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(13.0))
+                                    .text_color(solid(t.text.t1))
+                                    .child(a.framework.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(solid(t.text.t5))
+                                    .child(a.model.clone()),
+                            )
                             .when(recommended, |d| d.child(recommended_chip(t))),
                     )
-                    .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(format!("subtask {} · tier {} · {} in / {} out", a.subtask, a.tier_rank, fmt_k(a.input_tokens), fmt_k(a.output_tokens)))),
+                    .child(
+                        div()
+                            .text_size(px(10.5))
+                            .text_color(solid(t.text.t5))
+                            .child(format!(
+                                "subtask {} · tier {} · {} in / {} out",
+                                a.subtask,
+                                a.tier_rank,
+                                fmt_k(a.input_tokens),
+                                fmt_k(a.output_tokens)
+                            )),
+                    ),
             )
             .child(div().flex_1())
-            .child(diff_stat(t, "score", &format!("{:.2}", a.score), if a.status == RunStatus::Passed { t.status.green } else { t.status.amber }))
+            .child(diff_stat(
+                t,
+                "score",
+                &format!("{:.2}", a.score),
+                if a.status == RunStatus::Passed {
+                    t.status.green
+                } else {
+                    t.status.amber
+                },
+            ))
             .child(diff_stat(t, "spend", &fmt_usd(a.cost), t.text.t2))
             .child(status_pill(t, a))
             .into_any_element()
@@ -190,13 +242,29 @@ fn recommended_chip(t: &Theme) -> impl IntoElement {
         .child("RECOMMENDED")
 }
 
-fn diff_stat(t: &Theme, label: &'static str, value: &str, value_color: crate::theme::Rgb) -> impl IntoElement {
+fn diff_stat(
+    t: &Theme,
+    label: &'static str,
+    value: &str,
+    value_color: crate::theme::Rgb,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
         .items_end()
         .gap(px(2.0))
         .min_w(px(56.0))
-        .child(div().text_size(px(9.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(label))
-        .child(div().text_size(px(12.0)).text_color(solid(value_color)).child(value.to_string()))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(solid(value_color))
+                .child(value.to_string()),
+        )
 }

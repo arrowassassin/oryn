@@ -31,7 +31,10 @@ pub struct ListCommand {
 
 impl ListCommand {
     fn new(program: &str, args: &[&str]) -> Self {
-        Self { program: program.to_string(), args: args.iter().map(|s| s.to_string()).collect() }
+        Self {
+            program: program.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        }
     }
 }
 
@@ -127,16 +130,27 @@ pub fn build_targets(
     for target in targets {
         let model = &target.model;
         let (kind, default_price) = if target.framework == AgentFramework::Local {
-            (ModelKind::Local { endpoint: "http://localhost:11434".into() }, Pricing::ZERO)
+            (
+                ModelKind::Local {
+                    endpoint: "http://localhost:11434".into(),
+                },
+                Pricing::ZERO,
+            )
         } else {
-            (ModelKind::Api { provider: target.framework.to_string() }, Pricing::ZERO)
+            (
+                ModelKind::Api {
+                    provider: target.framework.to_string(),
+                },
+                Pricing::ZERO,
+            )
         };
         let price = if target.framework == AgentFramework::Local {
             Pricing::ZERO
         } else {
             pricing.price_fuzzy(model.as_str()).unwrap_or(default_price)
         };
-        let profile = lookup_profile_fuzzy(profiles, model).unwrap_or_else(|| baseline_profile(baseline));
+        let profile =
+            lookup_profile_fuzzy(profiles, model).unwrap_or_else(|| baseline_profile(baseline));
 
         specs.push(ModelSpec {
             id: model.clone(),
@@ -182,8 +196,14 @@ mod tests {
 
     #[test]
     fn default_list_commands_only_for_documented_clis() {
-        assert_eq!(default_list_command(AgentFramework::Local).unwrap().program, "ollama");
-        assert_eq!(default_list_command(AgentFramework::Aider).unwrap().program, "aider");
+        assert_eq!(
+            default_list_command(AgentFramework::Local).unwrap().program,
+            "ollama"
+        );
+        assert_eq!(
+            default_list_command(AgentFramework::Aider).unwrap().program,
+            "aider"
+        );
         assert!(default_list_command(AgentFramework::ClaudeCode).is_none());
         assert!(default_list_command(AgentFramework::Codex).is_none());
     }
@@ -200,7 +220,13 @@ mod tests {
                 "deepseek-r1:7b      def456          4.7 GB    1 week ago",
             ]),
         );
-        assert_eq!(out, vec![ModelId::new("qwen2.5-coder:7b"), ModelId::new("deepseek-r1:7b")]);
+        assert_eq!(
+            out,
+            vec![
+                ModelId::new("qwen2.5-coder:7b"),
+                ModelId::new("deepseek-r1:7b")
+            ]
+        );
     }
 
     #[test]
@@ -214,12 +240,21 @@ mod tests {
                 "- anthropic/claude-3-7-sonnet",
             ]),
         );
-        assert_eq!(out, vec![ModelId::new("anthropic/claude-3-7-sonnet"), ModelId::new("openai/gpt-5")]);
+        assert_eq!(
+            out,
+            vec![
+                ModelId::new("anthropic/claude-3-7-sonnet"),
+                ModelId::new("openai/gpt-5")
+            ]
+        );
     }
 
     #[test]
     fn parse_ignores_noise_and_spaced_lines() {
-        let out = parse_model_list(AgentFramework::Codex, &lines(&["", "some prose with spaces", "gpt-5.2"]));
+        let out = parse_model_list(
+            AgentFramework::Codex,
+            &lines(&["", "some prose with spaces", "gpt-5.2"]),
+        );
         assert_eq!(out, vec![ModelId::new("gpt-5.2")]);
     }
 
@@ -239,26 +274,45 @@ mod tests {
         let body = r#"{"data":[{"id":"anthropic/claude-3-7-sonnet","pricing":{"prompt":"0.000003","completion":"0.000015"}}]}"#;
         PricingTable {
             prices: crate::orchestrator::pricing::parse_openrouter_models(body).unwrap(),
-            provenance: CatalogProvenance { source: "openrouter".into(), fetched_at_unix: 1, version: "v1".into() },
+            provenance: CatalogProvenance {
+                source: "openrouter".into(),
+                fetched_at_unix: 1,
+                version: "v1".into(),
+            },
         }
     }
 
     #[test]
     fn build_targets_prices_and_profiles_dynamically() {
         let discovered = vec![
-            (AgentFramework::ClaudeCode, ModelId::new("anthropic/claude-3-7-sonnet")),
+            (
+                AgentFramework::ClaudeCode,
+                ModelId::new("anthropic/claude-3-7-sonnet"),
+            ),
             (AgentFramework::Local, ModelId::new("qwen2.5-coder:7b")),
         ];
         let (specs, profiles) = build_targets(&discovered, &pricing_table(), &BTreeMap::new(), 0.6);
         assert_eq!(specs.len(), 2);
 
-        let sonnet = specs.iter().find(|s| s.framework == AgentFramework::ClaudeCode).unwrap();
-        assert!((sonnet.pricing.input - 3.0).abs() < 1e-6, "priced from the live table");
-        let local = specs.iter().find(|s| s.framework == AgentFramework::Local).unwrap();
+        let sonnet = specs
+            .iter()
+            .find(|s| s.framework == AgentFramework::ClaudeCode)
+            .unwrap();
+        assert!(
+            (sonnet.pricing.input - 3.0).abs() < 1e-6,
+            "priced from the live table"
+        );
+        let local = specs
+            .iter()
+            .find(|s| s.framework == AgentFramework::Local)
+            .unwrap();
         assert_eq!(local.pricing, Pricing::ZERO, "local is free");
 
         // Every discovered model gets a routable baseline profile.
-        assert!(profiles[&ModelId::new("qwen2.5-coder:7b")].score(SubtaskKind::Debugging) >= MIN_CAPABILITY);
+        assert!(
+            profiles[&ModelId::new("qwen2.5-coder:7b")].score(SubtaskKind::Debugging)
+                >= MIN_CAPABILITY
+        );
     }
 
     #[test]
@@ -280,6 +334,9 @@ mod tests {
         // Discovered id ends with the known id's trailing segment.
         let discovered = vec![(AgentFramework::ClaudeCode, ModelId::new("anthropic/opus"))];
         let (_, out) = build_targets(&discovered, &PricingTable::seed(), &profiles, 0.5);
-        assert!((out[&ModelId::new("anthropic/opus")].score(SubtaskKind::Debugging) - 0.95).abs() < 1e-9);
+        assert!(
+            (out[&ModelId::new("anthropic/opus")].score(SubtaskKind::Debugging) - 0.95).abs()
+                < 1e-9
+        );
     }
 }

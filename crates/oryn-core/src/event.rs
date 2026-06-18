@@ -219,13 +219,17 @@ mod tests {
 
     #[test]
     fn event_roundtrips_through_json() {
-        let mut ev = AgentEvent::new("claude", "s1", EventKind::ToolUse, "{}")
-            .with_id(EventId::new("ev-7"));
+        let mut ev =
+            AgentEvent::new("claude", "s1", EventKind::ToolUse, "{}").with_id(EventId::new("ev-7"));
         ev.tool = Some("Bash".into());
         ev.tool_id = Some("toolu_1".into());
         ev.command = Some("ls -la".into());
         ev.files = vec!["src/main.rs".into()];
-        ev.usage = Some(TokenUsage { input: 1000, output: 200, ..Default::default() });
+        ev.usage = Some(TokenUsage {
+            input: 1000,
+            output: 200,
+            ..Default::default()
+        });
         ev.cost_usd = Some(0.0125);
         ev.diff_ref = Some(ArtifactId::from_content(b"a diff"));
 
@@ -259,7 +263,12 @@ mod tests {
 
     #[test]
     fn token_usage_total_and_non_cached() {
-        let u = TokenUsage { input: 100, output: 30, cache_read: 9, cache_write: 1 };
+        let u = TokenUsage {
+            input: 100,
+            output: 30,
+            cache_read: 9,
+            cache_write: 1,
+        };
         assert_eq!(u.non_cached(), 130);
         assert_eq!(u.total(), 140);
         assert_eq!(TokenUsage::default().total(), 0);

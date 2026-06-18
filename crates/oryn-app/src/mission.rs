@@ -146,8 +146,20 @@ impl Root {
                             .flex_col()
                             .gap(px(6.0))
                             .min_w(px(0.0))
-                            .child(div().text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child("MISSION CONTROL"))
-                            .child(div().text_size(px(21.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child(title)),
+                            .child(
+                                div()
+                                    .text_size(px(9.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(solid(t.text.t5))
+                                    .child("MISSION CONTROL"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(21.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(solid(t.text.t1))
+                                    .child(title),
+                            ),
                     )
                     .child(div().flex_1())
                     .child(
@@ -166,7 +178,11 @@ impl Root {
                             .text_color(solid(t.text.t2))
                             .cursor_pointer()
                             .on_click(self.launch_run(cx))
-                            .child(div().size(px(8.0)).rounded(px(2.0)).bg(solid(if running { t.status.amber } else { t.text.t3 })))
+                            .child(div().size(px(8.0)).rounded(px(2.0)).bg(solid(if running {
+                                t.status.amber
+                            } else {
+                                t.text.t3
+                            })))
                             .child(if running { "Running…" } else { "Re-run" }),
                     )
                     .child(
@@ -194,13 +210,32 @@ impl Root {
                     .gap(px(10.0))
                     .text_size(px(11.5))
                     .child(div().text_color(solid(t.text.t5)).child("repo"))
-                    .child(div().text_color(solid(t.text.t2)).child(self.repo.label.clone()))
+                    .child(
+                        div()
+                            .text_color(solid(t.text.t2))
+                            .child(self.repo.label.clone()),
+                    )
                     .child(div().text_color(solid(t.surfaces.dot_faint)).child("·"))
                     .child(div().text_color(solid(t.text.t5)).child("base"))
-                    .child(div().text_color(solid(t.text.t2)).child(self.repo.base_ref()))
+                    .child(
+                        div()
+                            .text_color(solid(t.text.t2))
+                            .child(self.repo.base_ref()),
+                    )
                     .child(div().text_color(solid(t.surfaces.dot_faint)).child("·"))
-                    .child(dot(px(6.0), if running { t.status.amber } else { t.status.green }))
-                    .child(div().text_color(solid(t.text.t2)).child(self.status_summary())),
+                    .child(dot(
+                        px(6.0),
+                        if running {
+                            t.status.amber
+                        } else {
+                            t.status.green
+                        },
+                    ))
+                    .child(
+                        div()
+                            .text_color(solid(t.text.t2))
+                            .child(self.status_summary()),
+                    ),
             )
     }
 
@@ -224,9 +259,14 @@ impl Root {
 
     fn failed_state(&self, cx: &mut Context<Self>, t: &Theme) -> AnyElement {
         let go = self.on(cx, Msg::Navigate(Screen::Launch));
-        notice_panel(t, t.status.red, "Run did not produce results", &self.run_note)
-            .child(self.primary_button("launch-failed", "Open Launch →", go, t))
-            .into_any_element()
+        notice_panel(
+            t,
+            t.status.red,
+            "Run did not produce results",
+            &self.run_note,
+        )
+        .child(self.primary_button("launch-failed", "Open Launch →", go, t))
+        .into_any_element()
     }
 
     fn primary_button(
@@ -287,11 +327,27 @@ impl Root {
                     .items_center()
                     .gap(px(9.0))
                     .mb(px(15.0))
-                    .child(div().text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child("THE CASCADE"))
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(solid(t.text.t3))
+                            .child("THE CASCADE"),
+                    )
                     .child(dot(px(6.0), t.accent.base))
-                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child("cheapest-capable first · advisor-gated"))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(solid(t.text.t5))
+                            .child("cheapest-capable first · advisor-gated"),
+                    )
                     .child(div().flex_1())
-                    .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child("advisor score · cost")),
+                    .child(
+                        div()
+                            .text_size(px(10.5))
+                            .text_color(solid(t.text.t5))
+                            .child("advisor score · cost"),
+                    ),
             )
             .children(rows)
     }
@@ -303,14 +359,30 @@ impl Root {
             for (col, a) in pair.iter().enumerate() {
                 cards.push(self.agent_card(cx, t, row * 2 + col, a));
             }
-            rows.push(div().flex().gap(px(14.0)).children(cards).into_any_element());
+            rows.push(
+                div()
+                    .flex()
+                    .gap(px(14.0))
+                    .children(cards)
+                    .into_any_element(),
+            );
         }
         div().flex().flex_col().gap(px(14.0)).children(rows)
     }
 
-    fn agent_card(&self, cx: &mut Context<Self>, t: &Theme, idx: usize, a: &AgentRun) -> AnyElement {
+    fn agent_card(
+        &self,
+        cx: &mut Context<Self>,
+        t: &Theme,
+        idx: usize,
+        a: &AgentRun,
+    ) -> AnyElement {
         let promoted = self.promoted == Some(idx);
-        let border = if a.won { tint(t.accent.base, 0.4) } else { overlay(t.overlays.w07) };
+        let border = if a.won {
+            tint(t.accent.base, 0.4)
+        } else {
+            overlay(t.overlays.w07)
+        };
         div()
             .relative()
             .flex_1()
@@ -323,7 +395,15 @@ impl Root {
             .px(px(18.0))
             .py(px(16.0))
             .overflow_hidden()
-            .child(div().absolute().left(px(0.0)).top(px(0.0)).bottom(px(0.0)).w(px(3.0)).bg(solid(a.color)))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(0.0))
+                    .top(px(0.0))
+                    .bottom(px(0.0))
+                    .w(px(3.0))
+                    .bg(solid(a.color)),
+            )
             .child(card_head(t, a))
             .child(subtask_line(t, a))
             .child(metrics_row(t, a))
@@ -333,7 +413,14 @@ impl Root {
             .into_any_element()
     }
 
-    fn card_footer(&self, cx: &mut Context<Self>, t: &Theme, idx: usize, a: &AgentRun, promoted: bool) -> impl IntoElement {
+    fn card_footer(
+        &self,
+        cx: &mut Context<Self>,
+        t: &Theme,
+        idx: usize,
+        a: &AgentRun,
+        promoted: bool,
+    ) -> impl IntoElement {
         let btn = |id: &'static str, label: &'static str, handler| {
             div()
                 .id(id)
@@ -364,11 +451,19 @@ impl Root {
             .on_click(self.on(cx, Msg::Promote(idx)))
             .map(|d| {
                 if promoted {
-                    d.bg(solid(t.status.green)).text_color(solid(0x07120B)).child("Promoted ✓")
+                    d.bg(solid(t.status.green))
+                        .text_color(solid(0x07120B))
+                        .child("Promoted ✓")
                 } else if a.status == RunStatus::Passed {
-                    d.bg(solid(t.accent.base)).text_color(solid(0x1A0F2E)).child("Promote")
+                    d.bg(solid(t.accent.base))
+                        .text_color(solid(0x1A0F2E))
+                        .child("Promote")
                 } else {
-                    d.bg(overlay(t.overlays.w03)).border_1().border_color(overlay(t.overlays.w07)).text_color(solid(t.text.t4)).child("Promote")
+                    d.bg(overlay(t.overlays.w03))
+                        .border_1()
+                        .border_color(overlay(t.overlays.w07))
+                        .text_color(solid(t.text.t4))
+                        .child("Promote")
                 }
             });
         div()
@@ -378,7 +473,12 @@ impl Root {
             .pt(px(13.0))
             .border_t_1()
             .border_color(overlay(t.overlays.w06))
-            .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(format!("tier {}", a.tier_rank)))
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(solid(t.text.t5))
+                    .child(format!("tier {}", a.tier_rank)),
+            )
             .child(div().flex_1())
             .child(btn("tl", "Timeline", self.on(cx, Msg::OpenTimeline(idx))))
             .child(promote)
@@ -399,8 +499,27 @@ fn notice_panel(t: &Theme, accent: Rgb, title: &str, body: &str) -> gpui::Div {
         .rounded(px(13.0))
         .px(px(22.0))
         .py(px(20.0))
-        .child(div().flex().items_center().gap(px(9.0)).mb(px(10.0)).child(dot(px(8.0), accent)).child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child(title.to_string())))
-        .child(div().text_size(px(12.5)).text_color(solid(t.text.t3)).child(body.to_string()))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(9.0))
+                .mb(px(10.0))
+                .child(dot(px(8.0), accent))
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(solid(t.text.t1))
+                        .child(title.to_string()),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(12.5))
+                .text_color(solid(t.text.t3))
+                .child(body.to_string()),
+        )
 }
 
 // ── card sub-parts (real data) ────────────────────────────────────────────────
@@ -422,10 +541,21 @@ fn card_head(t: &Theme, a: &AgentRun) -> impl IntoElement {
                         .flex()
                         .items_center()
                         .gap(px(7.0))
-                        .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(13.5)).text_color(solid(t.text.t1)).child(a.framework.clone()))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_size(px(13.5))
+                                .text_color(solid(t.text.t1))
+                                .child(a.framework.clone()),
+                        )
                         .when(a.won, |d| d.child(pill_chip(t, "WINNER"))),
                 )
-                .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(a.model.clone())),
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(solid(t.text.t5))
+                        .child(a.model.clone()),
+                ),
         )
         .child(div().flex_1())
         .child(status_pill(t, a))
@@ -443,8 +573,21 @@ fn subtask_line(t: &Theme, a: &AgentRun) -> impl IntoElement {
         .bg(overlay(t.overlays.w025))
         .border_1()
         .border_color(overlay(t.overlays.w05))
-        .child(div().text_size(px(9.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child("SUBTASK"))
-        .child(div().flex_1().overflow_hidden().text_size(px(11.0)).text_color(solid(t.text.t2)).child(a.subtask.clone()))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child("SUBTASK"),
+        )
+        .child(
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .text_size(px(11.0))
+                .text_color(solid(t.text.t2))
+                .child(a.subtask.clone()),
+        )
 }
 
 fn metrics_row(t: &Theme, a: &AgentRun) -> impl IntoElement {
@@ -455,17 +598,38 @@ fn metrics_row(t: &Theme, a: &AgentRun) -> impl IntoElement {
         .child(metric_tile(t, "IN", fmt_k(a.input_tokens), t.text.t1))
         .child(metric_tile(t, "OUT", fmt_k(a.output_tokens), t.text.t1))
         .child(metric_tile(t, "COST", fmt_usd(a.cost), t.text.t1))
-        .child(metric_tile(t, "SCORE", format!("{:.2}", a.score), status_color(t, a)))
+        .child(metric_tile(
+            t,
+            "SCORE",
+            format!("{:.2}", a.score),
+            status_color(t, a),
+        ))
 }
 
-fn metric_tile(t: &Theme, label: &'static str, value: String, value_color: Rgb) -> impl IntoElement {
+fn metric_tile(
+    t: &Theme,
+    label: &'static str,
+    value: String,
+    value_color: Rgb,
+) -> impl IntoElement {
     div()
         .flex_1()
         .flex()
         .flex_col()
         .gap(px(3.0))
-        .child(div().text_size(px(9.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(label))
-        .child(div().text_size(px(13.0)).text_color(solid(value_color)).child(value))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(13.0))
+                .text_color(solid(value_color))
+                .child(value),
+        )
 }
 
 fn score_gauge(t: &Theme, a: &AgentRun) -> impl IntoElement {
@@ -479,8 +643,18 @@ fn score_gauge(t: &Theme, a: &AgentRun) -> impl IntoElement {
             div()
                 .flex()
                 .justify_between()
-                .child(div().text_size(px(10.0)).text_color(solid(t.text.t4)).child("Advisor verdict"))
-                .child(div().text_size(px(10.5)).text_color(solid(t.text.t3)).child(format!("{:.0}%", frac * 100.0))),
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(solid(t.text.t4))
+                        .child("Advisor verdict"),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(solid(t.text.t3))
+                        .child(format!("{:.0}%", frac * 100.0)),
+                ),
         )
         .child(
             div()
@@ -488,7 +662,13 @@ fn score_gauge(t: &Theme, a: &AgentRun) -> impl IntoElement {
                 .rounded(px(3.0))
                 .bg(overlay(t.overlays.w06))
                 .overflow_hidden()
-                .child(div().h_full().w(relative(frac)).rounded(px(3.0)).bg(solid(status_color(t, a)))),
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(frac))
+                        .rounded(px(3.0))
+                        .bg(solid(status_color(t, a))),
+                ),
         )
 }
 
@@ -497,7 +677,11 @@ fn response_snippet(t: &Theme, a: &AgentRun) -> impl IntoElement {
         "(no winning output for this attempt)".to_string()
     } else {
         let snip: String = a.response.chars().take(220).collect();
-        if a.response.chars().count() > 220 { format!("{snip}…") } else { snip }
+        if a.response.chars().count() > 220 {
+            format!("{snip}…")
+        } else {
+            snip
+        }
     };
     div()
         .mb(px(13.0))
@@ -530,8 +714,19 @@ fn cascade_row(t: &Theme, a: &AgentRun) -> impl IntoElement {
                 .w(px(220.0))
                 .flex_none()
                 .child(dot(px(9.0), a.color))
-                .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(12.5)).text_color(solid(t.text.t1)).child(a.framework.clone()))
-                .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(a.model.clone()))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_size(px(12.5))
+                        .text_color(solid(t.text.t1))
+                        .child(a.framework.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(solid(t.text.t5))
+                        .child(a.model.clone()),
+                )
                 .when(a.won, |d| d.child(pill_chip(t, "WIN"))),
         )
         .child(
@@ -541,9 +736,22 @@ fn cascade_row(t: &Theme, a: &AgentRun) -> impl IntoElement {
                 .rounded(px(4.0))
                 .bg(overlay(t.overlays.w05))
                 .overflow_hidden()
-                .child(div().h_full().w(relative(frac)).rounded(px(4.0)).bg(solid(fill))),
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(frac))
+                        .rounded(px(4.0))
+                        .bg(solid(fill)),
+                ),
         )
-        .child(div().w(px(48.0)).flex_none().text_size(px(11.5)).text_color(solid(t.text.t2)).child(fmt_usd(a.cost)))
+        .child(
+            div()
+                .w(px(48.0))
+                .flex_none()
+                .text_size(px(11.5))
+                .text_color(solid(t.text.t2))
+                .child(fmt_usd(a.cost)),
+        )
         .child(status_pill(t, a))
 }
 
@@ -584,8 +792,29 @@ mod tests {
             response: String::new(),
         };
         assert_eq!(status_label(&base), "Verified winner");
-        assert_eq!(status_label(&AgentRun { won: true, status: RunStatus::Failed, ..base.clone() }), "Best-effort winner");
-        assert_eq!(status_label(&AgentRun { won: false, status: RunStatus::Passed, ..base.clone() }), "Passed · not chosen");
-        assert_eq!(status_label(&AgentRun { won: false, status: RunStatus::Failed, ..base }), "Failed verify");
+        assert_eq!(
+            status_label(&AgentRun {
+                won: true,
+                status: RunStatus::Failed,
+                ..base.clone()
+            }),
+            "Best-effort winner"
+        );
+        assert_eq!(
+            status_label(&AgentRun {
+                won: false,
+                status: RunStatus::Passed,
+                ..base.clone()
+            }),
+            "Passed · not chosen"
+        );
+        assert_eq!(
+            status_label(&AgentRun {
+                won: false,
+                status: RunStatus::Failed,
+                ..base
+            }),
+            "Failed verify"
+        );
     }
 }

@@ -20,18 +20,7 @@ use crate::event::TokenUsage;
 ///
 /// Each framework manages its own credentials and can access a different set of
 /// models. The routing atom is `(framework, model)` — an [`ExecutionTarget`].
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentFramework {
     /// Anthropic's Claude Code CLI.
@@ -68,17 +57,7 @@ impl fmt::Display for AgentFramework {
 ///
 /// The same model id accessed via two different frameworks counts as two distinct
 /// targets because each framework carries its own credentials and capabilities.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ExecutionTarget {
     /// The agent framework that owns the credentials for this target.
     pub framework: AgentFramework,
@@ -275,7 +254,9 @@ pub struct ProviderRegistry {
 impl ProviderRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
-        Self { providers: Vec::new() }
+        Self {
+            providers: Vec::new(),
+        }
     }
 
     /// Register `provider`. The provider is appended; subsequent `get` calls
@@ -320,7 +301,11 @@ mod tests {
 
     impl FakeProvider {
         fn new(spec: ModelSpec, response_text: impl Into<String>, usage: TokenUsage) -> Self {
-            Self { spec, response_text: response_text.into(), usage }
+            Self {
+                spec,
+                response_text: response_text.into(),
+                usage,
+            }
         }
     }
 
@@ -342,7 +327,9 @@ mod tests {
     fn api_spec(id: &str) -> ModelSpec {
         ModelSpec {
             id: ModelId::new(id),
-            kind: ModelKind::Api { provider: "anthropic".into() },
+            kind: ModelKind::Api {
+                provider: "anthropic".into(),
+            },
             pricing: Pricing {
                 input: 3.0,
                 output: 15.0,
@@ -357,7 +344,9 @@ mod tests {
     fn local_spec(id: &str, endpoint: &str) -> ModelSpec {
         ModelSpec {
             id: ModelId::new(id),
-            kind: ModelKind::Local { endpoint: endpoint.into() },
+            kind: ModelKind::Local {
+                endpoint: endpoint.into(),
+            },
             pricing: Pricing::ZERO,
             context_window: 8_192,
             framework: AgentFramework::Local,
@@ -402,7 +391,9 @@ mod tests {
 
     #[test]
     fn model_kind_api_roundtrips_json() {
-        let kind = ModelKind::Api { provider: "anthropic".into() };
+        let kind = ModelKind::Api {
+            provider: "anthropic".into(),
+        };
         let json = serde_json::to_string(&kind).unwrap();
         let back: ModelKind = serde_json::from_str(&json).unwrap();
         assert_eq!(back, kind);
@@ -410,7 +401,9 @@ mod tests {
 
     #[test]
     fn model_kind_local_roundtrips_json() {
-        let kind = ModelKind::Local { endpoint: "http://localhost:11434".into() };
+        let kind = ModelKind::Local {
+            endpoint: "http://localhost:11434".into(),
+        };
         let json = serde_json::to_string(&kind).unwrap();
         let back: ModelKind = serde_json::from_str(&json).unwrap();
         assert_eq!(back, kind);
@@ -429,7 +422,12 @@ mod tests {
 
     #[test]
     fn pricing_roundtrips_json() {
-        let p = Pricing { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 };
+        let p = Pricing {
+            input: 3.0,
+            output: 15.0,
+            cache_read: 0.3,
+            cache_write: 3.75,
+        };
         let json = serde_json::to_string(&p).unwrap();
         let back: Pricing = serde_json::from_str(&json).unwrap();
         assert_eq!(back, p);
@@ -449,7 +447,12 @@ mod tests {
 
     #[test]
     fn fake_provider_returns_canned_response() {
-        let usage = TokenUsage { input: 100, output: 50, cache_read: 20, cache_write: 5 };
+        let usage = TokenUsage {
+            input: 100,
+            output: 50,
+            cache_read: 20,
+            cache_write: 5,
+        };
         let provider = FakeProvider::new(api_spec("m1"), "fn main() {}", usage);
         let resp = provider.complete(&simple_req()).unwrap();
         assert_eq!(resp.text, "fn main() {}");
@@ -473,7 +476,11 @@ mod tests {
     fn registry_get_returns_registered_provider() {
         let mut reg = ProviderRegistry::new();
         let t = target(AgentFramework::ClaudeCode, "m1");
-        let usage = TokenUsage { input: 10, output: 5, ..Default::default() };
+        let usage = TokenUsage {
+            input: 10,
+            output: 5,
+            ..Default::default()
+        };
         reg.register(Box::new(FakeProvider::new(api_spec("m1"), "hi", usage)));
 
         let found = reg.get(&t).expect("provider should be registered");
@@ -483,9 +490,16 @@ mod tests {
     #[test]
     fn registry_get_returns_none_for_missing_target() {
         let mut reg = ProviderRegistry::new();
-        reg.register(Box::new(FakeProvider::new(api_spec("m1"), "", TokenUsage::default())));
+        reg.register(Box::new(FakeProvider::new(
+            api_spec("m1"),
+            "",
+            TokenUsage::default(),
+        )));
         // Different id
-        assert!(reg.get(&target(AgentFramework::ClaudeCode, "not-here")).is_none());
+        assert!(
+            reg.get(&target(AgentFramework::ClaudeCode, "not-here"))
+                .is_none()
+        );
         // Same id but different framework
         assert!(reg.get(&target(AgentFramework::Codex, "m1")).is_none());
     }
@@ -493,13 +507,21 @@ mod tests {
     #[test]
     fn registry_specs_returns_insertion_order() {
         let mut reg = ProviderRegistry::new();
-        reg.register(Box::new(FakeProvider::new(api_spec("first"), "", TokenUsage::default())));
+        reg.register(Box::new(FakeProvider::new(
+            api_spec("first"),
+            "",
+            TokenUsage::default(),
+        )));
         reg.register(Box::new(FakeProvider::new(
             local_spec("second", "http://localhost:11434"),
             "",
             TokenUsage::default(),
         )));
-        reg.register(Box::new(FakeProvider::new(api_spec("third"), "", TokenUsage::default())));
+        reg.register(Box::new(FakeProvider::new(
+            api_spec("third"),
+            "",
+            TokenUsage::default(),
+        )));
 
         let ids: Vec<&str> = reg.specs().iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["first", "second", "third"]);
@@ -509,8 +531,16 @@ mod tests {
     fn registry_get_first_match_when_duplicate_targets() {
         // Edge case: if two providers share an ExecutionTarget, get returns the first one.
         let mut reg = ProviderRegistry::new();
-        reg.register(Box::new(FakeProvider::new(api_spec("dup"), "first", TokenUsage::default())));
-        reg.register(Box::new(FakeProvider::new(api_spec("dup"), "second", TokenUsage::default())));
+        reg.register(Box::new(FakeProvider::new(
+            api_spec("dup"),
+            "first",
+            TokenUsage::default(),
+        )));
+        reg.register(Box::new(FakeProvider::new(
+            api_spec("dup"),
+            "second",
+            TokenUsage::default(),
+        )));
 
         let p = reg.get(&target(AgentFramework::ClaudeCode, "dup")).unwrap();
         let resp = p.complete(&simple_req()).unwrap();
@@ -523,8 +553,16 @@ mod tests {
         let mut reg = ProviderRegistry::new();
         let mut spec_codex = api_spec("m1");
         spec_codex.framework = AgentFramework::Codex;
-        reg.register(Box::new(FakeProvider::new(api_spec("m1"), "claude-code-resp", TokenUsage::default())));
-        reg.register(Box::new(FakeProvider::new(spec_codex, "codex-resp", TokenUsage::default())));
+        reg.register(Box::new(FakeProvider::new(
+            api_spec("m1"),
+            "claude-code-resp",
+            TokenUsage::default(),
+        )));
+        reg.register(Box::new(FakeProvider::new(
+            spec_codex,
+            "codex-resp",
+            TokenUsage::default(),
+        )));
 
         let p1 = reg.get(&target(AgentFramework::ClaudeCode, "m1")).unwrap();
         let p2 = reg.get(&target(AgentFramework::Codex, "m1")).unwrap();
@@ -535,10 +573,21 @@ mod tests {
     #[test]
     fn registry_complete_via_get() {
         let mut reg = ProviderRegistry::new();
-        let usage = TokenUsage { input: 200, output: 80, cache_read: 50, cache_write: 10 };
-        reg.register(Box::new(FakeProvider::new(api_spec("opus"), "some code", usage)));
+        let usage = TokenUsage {
+            input: 200,
+            output: 80,
+            cache_read: 50,
+            cache_write: 10,
+        };
+        reg.register(Box::new(FakeProvider::new(
+            api_spec("opus"),
+            "some code",
+            usage,
+        )));
 
-        let p = reg.get(&target(AgentFramework::ClaudeCode, "opus")).unwrap();
+        let p = reg
+            .get(&target(AgentFramework::ClaudeCode, "opus"))
+            .unwrap();
         let resp = p.complete(&simple_req()).unwrap();
         assert_eq!(resp.text, "some code");
         assert_eq!(resp.usage.total(), 340);
@@ -560,6 +609,9 @@ mod tests {
     fn registry_default_is_empty() {
         let reg = ProviderRegistry::default();
         assert!(reg.specs().is_empty());
-        assert!(reg.get(&target(AgentFramework::ClaudeCode, "any")).is_none());
+        assert!(
+            reg.get(&target(AgentFramework::ClaudeCode, "any"))
+                .is_none()
+        );
     }
 }

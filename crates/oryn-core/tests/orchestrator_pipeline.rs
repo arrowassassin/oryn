@@ -53,7 +53,10 @@ impl ModelProvider for FakeProvider {
         &self.spec
     }
     fn complete(&self, _req: &CompletionRequest) -> Result<CompletionResponse, ProviderError> {
-        Ok(CompletionResponse { text: self.spec.target().to_string(), usage: self.usage })
+        Ok(CompletionResponse {
+            text: self.spec.target().to_string(),
+            usage: self.usage,
+        })
     }
 }
 
@@ -66,7 +69,10 @@ struct AcceptVerifier {
 impl Verifier for AcceptVerifier {
     fn verify(&self, _subtask: &Subtask, response: &CompletionResponse) -> Verdict {
         let passed = self.passing.iter().any(|t| t == &response.text);
-        Verdict { passed, score: if passed { 0.9 } else { 0.3 } }
+        Verdict {
+            passed,
+            score: if passed { 0.9 } else { 0.3 },
+        }
     }
 }
 
@@ -74,16 +80,31 @@ impl Verifier for AcceptVerifier {
 
 fn spec(framework: AgentFramework, id: &str, pricing: Pricing) -> ModelSpec {
     let kind = if pricing == Pricing::ZERO {
-        ModelKind::Local { endpoint: "http://localhost:11434".into() }
+        ModelKind::Local {
+            endpoint: "http://localhost:11434".into(),
+        }
     } else {
-        ModelKind::Api { provider: "anthropic".into() }
+        ModelKind::Api {
+            provider: "anthropic".into(),
+        }
     };
-    ModelSpec { id: ModelId::new(id), kind, pricing, context_window: 200_000, framework }
+    ModelSpec {
+        id: ModelId::new(id),
+        kind,
+        pricing,
+        context_window: 200_000,
+        framework,
+    }
 }
 
 fn cache_usage() -> TokenUsage {
     // Cache-heavy: most of the prompt is served from cache → positive savings.
-    TokenUsage { input: 800, output: 600, cache_read: 9_000, cache_write: 1_200 }
+    TokenUsage {
+        input: 800,
+        output: 600,
+        cache_read: 9_000,
+        cache_write: 1_200,
+    }
 }
 
 fn subtask(id: &str, kind: SubtaskKind, deps: &[&str]) -> Subtask {
@@ -100,14 +121,28 @@ fn subtask(id: &str, kind: SubtaskKind, deps: &[&str]) -> Subtask {
 #[test]
 fn full_pipeline_routes_escalates_and_saves() {
     // Pricing: sonnet cheaper than opus; local is free.
-    let sonnet_pricing = Pricing { input: 3.0, output: 15.0, cache_read: 0.30, cache_write: 3.75 };
-    let opus_pricing = Pricing { input: 15.0, output: 75.0, cache_read: 1.50, cache_write: 18.75 };
+    let sonnet_pricing = Pricing {
+        input: 3.0,
+        output: 15.0,
+        cache_read: 0.30,
+        cache_write: 3.75,
+    };
+    let opus_pricing = Pricing {
+        input: 15.0,
+        output: 75.0,
+        cache_read: 1.50,
+        cache_write: 18.75,
+    };
 
     // 1. Discover targets from two framework sources. Model ids match the seed
     //    catalog so resolve_matrix produces real tiers.
     let local_src = FakeDiscovery {
         framework: AgentFramework::Local,
-        specs: vec![spec(AgentFramework::Local, "local-qwen-coder", Pricing::ZERO)],
+        specs: vec![spec(
+            AgentFramework::Local,
+            "local-qwen-coder",
+            Pricing::ZERO,
+        )],
     };
     let claude_src = FakeDiscovery {
         framework: AgentFramework::ClaudeCode,
@@ -116,10 +151,16 @@ fn full_pipeline_routes_escalates_and_saves() {
             spec(AgentFramework::ClaudeCode, "sonnet", sonnet_pricing),
         ],
     };
-    let (specs, errors) =
-        discover_targets(&[&local_src as &dyn ModelDiscovery, &claude_src as &dyn ModelDiscovery]);
+    let (specs, errors) = discover_targets(&[
+        &local_src as &dyn ModelDiscovery,
+        &claude_src as &dyn ModelDiscovery,
+    ]);
     assert!(errors.is_empty());
-    assert_eq!(specs.len(), 3, "three distinct (framework, model) targets discovered");
+    assert_eq!(
+        specs.len(),
+        3,
+        "three distinct (framework, model) targets discovered"
+    );
 
     // 2. Resolve the capability matrix against the bundled seed catalog.
     let catalog = CapabilityCatalog::seed();
@@ -128,14 +169,25 @@ fn full_pipeline_routes_escalates_and_saves() {
     // Sanity: Debugging excludes the weak local model (seed 0.40 < MIN_CAPABILITY)
     // and orders sonnet (cheaper) before opus.
     let dbg_tier = matrix.tier(SubtaskKind::Debugging);
-    assert_eq!(dbg_tier.len(), 2, "only the two API models clear the Debugging bar");
-    assert_eq!(dbg_tier[0].model, ModelId::new("sonnet"), "cheaper sonnet leads the tier");
+    assert_eq!(
+        dbg_tier.len(),
+        2,
+        "only the two API models clear the Debugging bar"
+    );
+    assert_eq!(
+        dbg_tier[0].model,
+        ModelId::new("sonnet"),
+        "cheaper sonnet leads the tier"
+    );
     assert_eq!(dbg_tier[1].model, ModelId::new("opus"));
 
     // 3. Build a registry from the discovered specs.
     let mut registry = ProviderRegistry::new();
     for s in &specs {
-        registry.register(Box::new(FakeProvider { spec: s.clone(), usage: cache_usage() }));
+        registry.register(Box::new(FakeProvider {
+            spec: s.clone(),
+            usage: cache_usage(),
+        }));
     }
 
     let prefix = CacheStablePrefix::builder()
@@ -170,7 +222,10 @@ fn full_pipeline_routes_escalates_and_saves() {
     // a: cheap local passes immediately (one attempt, no race).
     let a = &result.outcomes[0];
     assert_eq!(a.attempts.len(), 1);
-    assert_eq!(a.winner.as_ref().unwrap().to_string(), "local/local-qwen-coder");
+    assert_eq!(
+        a.winner.as_ref().unwrap().to_string(),
+        "local/local-qwen-coder"
+    );
 
     // b: cheap sonnet fails, escalate to opus (two attempts).
     let b = &result.outcomes[1];
@@ -184,17 +239,29 @@ fn full_pipeline_routes_escalates_and_saves() {
     // c: cheapest capable is the free local model again.
     let c = &result.outcomes[2];
     assert_eq!(c.attempts.len(), 1);
-    assert_eq!(c.winner.as_ref().unwrap().to_string(), "local/local-qwen-coder");
+    assert_eq!(
+        c.winner.as_ref().unwrap().to_string(),
+        "local/local-qwen-coder"
+    );
 
     // The priced attempts on b carry cache tokens → positive cache savings.
-    assert!(result.spend.gross_usd > 0.0, "priced attempts incurred cost");
-    assert!(result.spend.saved_usd > 0.0, "cache-stable prefix produced real savings");
+    assert!(
+        result.spend.gross_usd > 0.0,
+        "priced attempts incurred cost"
+    );
+    assert!(
+        result.spend.saved_usd > 0.0,
+        "cache-stable prefix produced real savings"
+    );
     assert!((0.0..=1.0).contains(&result.spend.fraction_saved()));
 
     // Determinism: identical inputs → identical result.
     let mut registry2 = ProviderRegistry::new();
     for s in &specs {
-        registry2.register(Box::new(FakeProvider { spec: s.clone(), usage: cache_usage() }));
+        registry2.register(Box::new(FakeProvider {
+            spec: s.clone(),
+            usage: cache_usage(),
+        }));
     }
     let result2 = Orchestrator::run(&mission, &registry2, &matrix, &prefix, &verifier).unwrap();
     assert_eq!(result, result2);

@@ -166,11 +166,18 @@ impl OllamaAdvisor {
     /// Construct an advisor talking to `base_url` (e.g. `http://localhost:11434`)
     /// using `model` (e.g. `qwen2.5-coder`).
     pub fn new(base_url: impl Into<String>, model: impl Into<String>, http: Arc<dyn Http>) -> Self {
-        Self { base_url: base_url.into(), model: model.into(), http }
+        Self {
+            base_url: base_url.into(),
+            model: model.into(),
+            http,
+        }
     }
 
     fn endpoint(&self) -> String {
-        format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'))
+        format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        )
     }
 }
 
@@ -201,7 +208,9 @@ impl<A: LocalAdvisor> AdvisorVerifier<A> {
 
 impl<A: LocalAdvisor> Verifier for AdvisorVerifier<A> {
     fn verify(&self, subtask: &Subtask, response: &CompletionResponse) -> Verdict {
-        self.advisor.verify(subtask, &response.text).unwrap_or(self.fallback)
+        self.advisor
+            .verify(subtask, &response.text)
+            .unwrap_or(self.fallback)
     }
 }
 
@@ -247,7 +256,10 @@ mod tests {
 
     #[test]
     fn parse_plain_json_verdict() {
-        let v = parse_verdict(&ok_body(r#"{"passed":true,"score":0.92,"reason":"tests pass"}"#)).unwrap();
+        let v = parse_verdict(&ok_body(
+            r#"{"passed":true,"score":0.92,"reason":"tests pass"}"#,
+        ))
+        .unwrap();
         assert!(v.passed);
         assert!((v.score - 0.92).abs() < 1e-9);
     }
@@ -267,9 +279,18 @@ mod tests {
 
     #[test]
     fn parse_verdict_rejects_missing_fields() {
-        assert!(matches!(parse_verdict(&ok_body(r#"{"score":0.5}"#)), Err(AdvisorError::Malformed(_))));
-        assert!(matches!(parse_verdict(&ok_body("not json")), Err(AdvisorError::Malformed(_))));
-        assert!(matches!(parse_verdict("garbage"), Err(AdvisorError::Malformed(_))));
+        assert!(matches!(
+            parse_verdict(&ok_body(r#"{"score":0.5}"#)),
+            Err(AdvisorError::Malformed(_))
+        ));
+        assert!(matches!(
+            parse_verdict(&ok_body("not json")),
+            Err(AdvisorError::Malformed(_))
+        ));
+        assert!(matches!(
+            parse_verdict("garbage"),
+            Err(AdvisorError::Malformed(_))
+        ));
     }
 
     // ── fakes ────────────────────────────────────────────────────────────────
@@ -302,9 +323,15 @@ mod tests {
 
     #[test]
     fn ollama_advisor_surfaces_transport_error() {
-        let http = Arc::new(FakeHttp { reply: Err(()), seen: Mutex::new(None) });
+        let http = Arc::new(FakeHttp {
+            reply: Err(()),
+            seen: Mutex::new(None),
+        });
         let advisor = OllamaAdvisor::new("http://localhost:11434/", "m", http);
-        assert!(matches!(advisor.verify(&subtask(), "x"), Err(AdvisorError::Http(_))));
+        assert!(matches!(
+            advisor.verify(&subtask(), "x"),
+            Err(AdvisorError::Http(_))
+        ));
     }
 
     // ── AdvisorVerifier ─────────────────────────────────────────────────────────
@@ -317,14 +344,23 @@ mod tests {
     }
 
     fn response(text: &str) -> CompletionResponse {
-        CompletionResponse { text: text.into(), usage: TokenUsage::default() }
+        CompletionResponse {
+            text: text.into(),
+            usage: TokenUsage::default(),
+        }
     }
 
     #[test]
     fn advisor_verifier_uses_advisor_verdict_on_success() {
         let v = AdvisorVerifier::new(
-            StubAdvisor(Ok(Verdict { passed: true, score: 0.9 })),
-            Verdict { passed: false, score: 0.0 },
+            StubAdvisor(Ok(Verdict {
+                passed: true,
+                score: 0.9,
+            })),
+            Verdict {
+                passed: false,
+                score: 0.0,
+            },
         );
         let out = v.verify(&subtask(), &response("done"));
         assert!(out.passed);
@@ -333,7 +369,10 @@ mod tests {
 
     #[test]
     fn advisor_verifier_falls_back_on_error() {
-        let fallback = Verdict { passed: false, score: 0.1 };
+        let fallback = Verdict {
+            passed: false,
+            score: 0.1,
+        };
         let v = AdvisorVerifier::new(StubAdvisor(Err(())), fallback);
         let out = v.verify(&subtask(), &response("done"));
         assert!(!out.passed);
@@ -342,7 +381,10 @@ mod tests {
 
     #[test]
     fn http_error_displays() {
-        assert_eq!(HttpError::Unreachable.to_string(), "http endpoint unreachable");
+        assert_eq!(
+            HttpError::Unreachable.to_string(),
+            "http endpoint unreachable"
+        );
         assert_eq!(HttpError::Status(503).to_string(), "http status 503");
     }
 }

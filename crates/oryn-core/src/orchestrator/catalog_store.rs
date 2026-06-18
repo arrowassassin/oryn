@@ -26,7 +26,10 @@ pub struct CatalogBundle {
 impl CatalogBundle {
     /// The bundled-seed bundle: offline, deterministic, always available.
     pub fn seed() -> Self {
-        Self { capability: CapabilityCatalog::seed(), pricing: PricingTable::seed() }
+        Self {
+            capability: CapabilityCatalog::seed(),
+            pricing: PricingTable::seed(),
+        }
     }
 
     /// Serialize to pretty JSON for parking on disk.
@@ -51,7 +54,10 @@ impl CatalogBundle {
     /// The age basis: the **oldest** of the two snapshots' fetch timestamps, so a
     /// stale half forces a refresh.
     pub fn fetched_at(&self) -> u64 {
-        self.capability.provenance.fetched_at_unix.min(self.pricing.provenance.fetched_at_unix)
+        self.capability
+            .provenance
+            .fetched_at_unix
+            .min(self.pricing.provenance.fetched_at_unix)
     }
 
     /// Whether the bundle is older than `interval_secs` as of `now_unix` (and thus
@@ -131,7 +137,9 @@ impl RefreshPolicy {
 impl Default for RefreshPolicy {
     fn default() -> Self {
         // Refresh roughly once a day.
-        Self { interval_secs: 24 * 60 * 60 }
+        Self {
+            interval_secs: 24 * 60 * 60,
+        }
     }
 }
 
@@ -148,8 +156,13 @@ pub fn refresh_or_keep(
 ) -> CatalogBundle {
     let capability = CapabilityCatalog::refreshed(capability_source, weights, now_unix)
         .unwrap_or_else(|_| current.capability.clone());
-    let pricing = pricing_source.fetch(now_unix).unwrap_or_else(|_| current.pricing.clone());
-    CatalogBundle { capability, pricing }
+    let pricing = pricing_source
+        .fetch(now_unix)
+        .unwrap_or_else(|_| current.pricing.clone());
+    CatalogBundle {
+        capability,
+        pricing,
+    }
 }
 
 /// Load the parked bundle and, if it is due for refresh, fetch + re-park a fresh
@@ -166,7 +179,13 @@ pub fn load_and_maybe_refresh(
     if !policy.due(&current, now_unix) {
         return current;
     }
-    let refreshed = refresh_or_keep(&current, capability_source, weights, pricing_source, now_unix);
+    let refreshed = refresh_or_keep(
+        &current,
+        capability_source,
+        weights,
+        pricing_source,
+        now_unix,
+    );
     // Park the refreshed bundle; ignore write failures (we still return it).
     let _ = save(store, &refreshed);
     refreshed
@@ -177,7 +196,9 @@ pub fn load_and_maybe_refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestrator::catalog::{CatalogProvenance, RawBenchmarks, SourceError, default_weights};
+    use crate::orchestrator::catalog::{
+        CatalogProvenance, RawBenchmarks, SourceError, default_weights,
+    };
     use crate::orchestrator::pricing::PricingTable;
     use crate::orchestrator::provider::{ModelId, Pricing};
     use std::collections::BTreeMap;
@@ -216,17 +237,32 @@ mod tests {
         fn fetch(&self, now: u64) -> Result<PricingTable, SourceError> {
             self.0.map_err(|()| SourceError::Unavailable)?;
             let mut prices = BTreeMap::new();
-            prices.insert(ModelId::new("opus"), Pricing { input: 9.0, output: 9.0, cache_read: 0.0, cache_write: 0.0 });
+            prices.insert(
+                ModelId::new("opus"),
+                Pricing {
+                    input: 9.0,
+                    output: 9.0,
+                    cache_read: 0.0,
+                    cache_write: 0.0,
+                },
+            );
             Ok(PricingTable {
                 prices,
-                provenance: CatalogProvenance { source: "fake-price".into(), fetched_at_unix: now, version: "v1".into() },
+                provenance: CatalogProvenance {
+                    source: "fake-price".into(),
+                    fetched_at_unix: now,
+                    version: "v1".into(),
+                },
             })
         }
     }
 
     fn bench() -> RawBenchmarks {
         let mut m = BTreeMap::new();
-        m.insert(ModelId::new("opus"), BTreeMap::from([("aider-polyglot".to_string(), 0.9)]));
+        m.insert(
+            ModelId::new("opus"),
+            BTreeMap::from([("aider-polyglot".to_string(), 0.9)]),
+        );
         RawBenchmarks { metrics: m }
     }
 
@@ -259,23 +295,44 @@ mod tests {
 
     #[test]
     fn fresh_bundle_is_not_stale_within_interval() {
-        let fresh = refresh_or_keep(&CatalogBundle::seed(), &FakeCap(Ok(bench())), &default_weights(), &FakePrice(Ok(())), 1_000_000);
+        let fresh = refresh_or_keep(
+            &CatalogBundle::seed(),
+            &FakeCap(Ok(bench())),
+            &default_weights(),
+            &FakePrice(Ok(())),
+            1_000_000,
+        );
         assert!(!fresh.is_stale(1_000_000 + 10, 3600));
         assert!(fresh.is_stale(1_000_000 + 3600, 3600));
     }
 
     #[test]
     fn refresh_pulls_both_sources() {
-        let fresh = refresh_or_keep(&CatalogBundle::seed(), &FakeCap(Ok(bench())), &default_weights(), &FakePrice(Ok(())), 42);
+        let fresh = refresh_or_keep(
+            &CatalogBundle::seed(),
+            &FakeCap(Ok(bench())),
+            &default_weights(),
+            &FakePrice(Ok(())),
+            42,
+        );
         assert_eq!(fresh.capability.provenance.fetched_at_unix, 42);
         assert_eq!(fresh.pricing.provenance.fetched_at_unix, 42);
-        assert_eq!(fresh.pricing.price(&ModelId::new("opus")).unwrap().input, 9.0);
+        assert_eq!(
+            fresh.pricing.price(&ModelId::new("opus")).unwrap().input,
+            9.0
+        );
     }
 
     #[test]
     fn refresh_keeps_current_when_pricing_source_down() {
         let current = CatalogBundle::seed();
-        let kept = refresh_or_keep(&current, &FakeCap(Ok(bench())), &default_weights(), &FakePrice(Err(())), 42);
+        let kept = refresh_or_keep(
+            &current,
+            &FakeCap(Ok(bench())),
+            &default_weights(),
+            &FakePrice(Err(())),
+            42,
+        );
         // pricing kept from seed, capability refreshed
         assert_eq!(kept.pricing, current.pricing);
         assert_eq!(kept.capability.provenance.fetched_at_unix, 42);
@@ -284,7 +341,13 @@ mod tests {
     #[test]
     fn refresh_keeps_current_when_benchmark_source_down() {
         let current = CatalogBundle::seed();
-        let kept = refresh_or_keep(&current, &FakeCap(Err(())), &default_weights(), &FakePrice(Ok(())), 42);
+        let kept = refresh_or_keep(
+            &current,
+            &FakeCap(Err(())),
+            &default_weights(),
+            &FakePrice(Ok(())),
+            42,
+        );
         assert_eq!(kept.capability, current.capability);
         assert_eq!(kept.pricing.provenance.fetched_at_unix, 42);
     }
@@ -293,7 +356,14 @@ mod tests {
     fn load_and_maybe_refresh_parks_when_stale() {
         let store = MemStore::default();
         // Empty store → seed (stale) → refresh + park.
-        let bundle = load_and_maybe_refresh(&store, RefreshPolicy::new(3600), &FakeCap(Ok(bench())), &default_weights(), &FakePrice(Ok(())), 5_000);
+        let bundle = load_and_maybe_refresh(
+            &store,
+            RefreshPolicy::new(3600),
+            &FakeCap(Ok(bench())),
+            &default_weights(),
+            &FakePrice(Ok(())),
+            5_000,
+        );
         assert_eq!(bundle.pricing.provenance.fetched_at_unix, 5_000);
         // It was parked: reloading yields the same fresh bundle.
         assert_eq!(load_or_seed(&store), bundle);
@@ -302,11 +372,24 @@ mod tests {
     #[test]
     fn load_and_maybe_refresh_skips_when_fresh() {
         let store = MemStore::default();
-        let fresh = refresh_or_keep(&CatalogBundle::seed(), &FakeCap(Ok(bench())), &default_weights(), &FakePrice(Ok(())), 1_000);
+        let fresh = refresh_or_keep(
+            &CatalogBundle::seed(),
+            &FakeCap(Ok(bench())),
+            &default_weights(),
+            &FakePrice(Ok(())),
+            1_000,
+        );
         save(&store, &fresh).unwrap();
         // now only 100s later, interval 3600 → not due → returns parked unchanged,
         // even though the sources would return now=1_500.
-        let got = load_and_maybe_refresh(&store, RefreshPolicy::new(3600), &FakeCap(Ok(bench())), &default_weights(), &FakePrice(Ok(())), 1_100);
+        let got = load_and_maybe_refresh(
+            &store,
+            RefreshPolicy::new(3600),
+            &FakeCap(Ok(bench())),
+            &default_weights(),
+            &FakePrice(Ok(())),
+            1_100,
+        );
         assert_eq!(got, fresh);
     }
 }

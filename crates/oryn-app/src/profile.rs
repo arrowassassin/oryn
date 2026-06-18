@@ -72,8 +72,24 @@ impl Root {
                 .child(pref_row(t, "Accent", t.accent.name.to_string()))
                 .child(pref_row(t, "Density", density_label.to_string()))
                 .child(pref_row(t, "UI font", font_label.to_string()))
-                .child(pref_row(t, "Telemetry", if s.telemetry { "On".into() } else { "Off".into() }))
-                .child(pref_row(t, "Auto-tear-down", if s.auto_cleanup { "On".into() } else { "Off".into() })),
+                .child(pref_row(
+                    t,
+                    "Telemetry",
+                    if s.telemetry {
+                        "On".into()
+                    } else {
+                        "Off".into()
+                    },
+                ))
+                .child(pref_row(
+                    t,
+                    "Auto-tear-down",
+                    if s.auto_cleanup {
+                        "On".into()
+                    } else {
+                        "Off".into()
+                    },
+                )),
         )
     }
 }
@@ -108,8 +124,19 @@ fn identity_card(t: &Theme) -> impl IntoElement {
                 .flex()
                 .flex_col()
                 .gap(px(3.0))
-                .child(div().text_size(px(17.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child("Ada Keller"))
-                .child(div().text_size(px(11.5)).text_color(solid(t.text.t3)).child("ada@acme.dev"))
+                .child(
+                    div()
+                        .text_size(px(17.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(solid(t.text.t1))
+                        .child("Ada Keller"),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(solid(t.text.t3))
+                        .child("ada@acme.dev"),
+                )
                 .child(
                     div()
                         .flex()
@@ -144,7 +171,14 @@ fn card(t: &Theme, title: &'static str, body: impl IntoElement) -> impl IntoElem
         .rounded(px(12.0))
         .px(px(18.0))
         .py(px(16.0))
-        .child(div().mb(px(10.0)).text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(title))
+        .child(
+            div()
+                .mb(px(10.0))
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(title),
+        )
         .child(body)
 }
 
@@ -154,8 +188,19 @@ fn field(t: &Theme, label: &'static str, value: &'static str) -> impl IntoElemen
         .flex()
         .flex_col()
         .gap(px(5.0))
-        .child(div().text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(label))
-        .child(div().text_size(px(13.0)).text_color(solid(t.text.t1)).child(value))
+        .child(
+            div()
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(13.0))
+                .text_color(solid(t.text.t1))
+                .child(value),
+        )
 }
 
 fn pref_row(t: &Theme, label: &'static str, value: String) -> impl IntoElement {
@@ -166,8 +211,18 @@ fn pref_row(t: &Theme, label: &'static str, value: String) -> impl IntoElement {
         .py(px(10.0))
         .border_t_1()
         .border_color(overlay(t.overlays.w05))
-        .child(div().text_size(px(12.0)).text_color(solid(t.text.t3)).child(label))
-        .child(div().text_size(px(12.5)).text_color(solid(t.text.t1)).child(value))
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(solid(t.text.t3))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(12.5))
+                .text_color(solid(t.text.t1))
+                .child(value),
+        )
 }
 
 fn badge(label: &'static str, hue: crate::theme::Rgb) -> impl IntoElement {

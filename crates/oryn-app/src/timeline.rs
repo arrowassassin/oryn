@@ -30,17 +30,29 @@ fn events_for(t: &Theme, a: &AgentRun) -> Vec<TraceEvent> {
             kind: "ROUTE".into(),
             hue: t.accent.base,
             title: format!("Routed to {} · {}", a.framework, a.model),
-            detail: format!("subtask “{}” · tier {} (0 = cheapest-capable)", a.subtask, a.tier_rank),
+            detail: format!(
+                "subtask “{}” · tier {} (0 = cheapest-capable)",
+                a.subtask, a.tier_rank
+            ),
         },
         TraceEvent {
             kind: "USAGE".into(),
             hue: t.status.blue,
             title: "Completion".into(),
-            detail: format!("{} in · {} out · {}", fmt_k(a.input_tokens), fmt_k(a.output_tokens), fmt_usd(a.cost)),
+            detail: format!(
+                "{} in · {} out · {}",
+                fmt_k(a.input_tokens),
+                fmt_k(a.output_tokens),
+                fmt_usd(a.cost)
+            ),
         },
         TraceEvent {
             kind: "VERIFY".into(),
-            hue: if a.status == RunStatus::Passed { t.status.green } else { t.status.red },
+            hue: if a.status == RunStatus::Passed {
+                t.status.green
+            } else {
+                t.status.red
+            },
             title: format!("Advisor verdict · score {:.2}", a.score),
             detail: if a.status == RunStatus::Passed {
                 "passed verification — cascade may stop here".into()
@@ -95,12 +107,12 @@ impl Root {
             .min_h(px(0.0))
             .child(crate::view_header(t, "FAITHFUL TRACE", "Timeline"))
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(div().text_size(px(12.5)).text_color(solid(t.text.t4)).child(self.status_summary())),
+                div().flex_1().flex().items_center().justify_center().child(
+                    div()
+                        .text_size(px(12.5))
+                        .text_color(solid(t.text.t4))
+                        .child(self.status_summary()),
+                ),
             )
             .into_any_element()
     }
@@ -128,7 +140,11 @@ impl Root {
                     .text_size(px(12.0))
                     .cursor_pointer()
                     .on_click(self.on(cx, Msg::SelectAgent(i)))
-                    .when(active, |d| d.bg(overlay(t.overlays.w09)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)))
+                    .when(active, |d| {
+                        d.bg(overlay(t.overlays.w09))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(solid(t.text.t1))
+                    })
                     .when(!active, |d| d.text_color(solid(t.text.t4)))
                     .child(dot(px(7.0), a.color))
                     .child(a.framework.clone()),
@@ -143,15 +159,36 @@ impl Root {
             .py(px(14.0))
             .border_b_1()
             .border_color(overlay(t.overlays.w06))
-            .child(div().text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child("FAITHFUL TRACE"))
+            .child(
+                div()
+                    .text_size(px(9.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(solid(t.text.t5))
+                    .child("FAITHFUL TRACE"),
+            )
             .child(tabs)
     }
 
     fn lifecycle_banner(&self, cx: &mut Context<Self>, t: &Theme, sel: &AgentRun) -> AnyElement {
         let (hue, glyph, title, detail): (Rgb, &str, String, String) = match (sel.won, sel.status) {
-            (true, RunStatus::Passed) => (t.status.green, "✓", "Verified winner".into(), "advisor passed this attempt; it was selected for the subtask".into()),
-            (true, RunStatus::Failed) => (t.status.amber, "▲", "Best-effort winner".into(), "no candidate passed verification; the highest-scoring attempt was chosen".into()),
-            (false, _) => (t.status.red, "■", "Not selected".into(), "a cheaper or higher-scoring attempt won this subtask".into()),
+            (true, RunStatus::Passed) => (
+                t.status.green,
+                "✓",
+                "Verified winner".into(),
+                "advisor passed this attempt; it was selected for the subtask".into(),
+            ),
+            (true, RunStatus::Failed) => (
+                t.status.amber,
+                "▲",
+                "Best-effort winner".into(),
+                "no candidate passed verification; the highest-scoring attempt was chosen".into(),
+            ),
+            (false, _) => (
+                t.status.red,
+                "■",
+                "Not selected".into(),
+                "a cheaper or higher-scoring attempt won this subtask".into(),
+            ),
         };
         div()
             .flex()
@@ -165,14 +202,30 @@ impl Root {
             .bg(tint(hue, 0.06))
             .border_1()
             .border_color(tint(hue, 0.28))
-            .child(div().text_size(px(13.0)).text_color(solid(hue)).child(glyph.to_string()))
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(solid(hue))
+                    .child(glyph.to_string()),
+            )
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(2.0))
-                    .child(div().text_size(px(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(hue)).child(title))
-                    .child(div().text_size(px(10.5)).text_color(solid(t.text.t3)).child(detail)),
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(solid(hue))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.5))
+                            .text_color(solid(t.text.t3))
+                            .child(detail),
+                    ),
             )
             .child(div().flex_1())
             .child(
@@ -217,13 +270,28 @@ fn run_status_header(t: &Theme, sel: &AgentRun) -> impl IntoElement {
                     div()
                         .flex()
                         .flex_col()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(14.0)).text_color(solid(t.text.t1)).child(sel.framework.clone()))
-                        .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(sel.model.clone())),
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_size(px(14.0))
+                                .text_color(solid(t.text.t1))
+                                .child(sel.framework.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(solid(t.text.t5))
+                                .child(sel.model.clone()),
+                        ),
                 )
                 .child(status_pill(t, sel)),
         )
         .child(div().flex_1())
-        .child(mini_stat(t, "Tokens", format!("{} / {}", fmt_k(sel.input_tokens), fmt_k(sel.output_tokens))))
+        .child(mini_stat(
+            t,
+            "Tokens",
+            format!("{} / {}", fmt_k(sel.input_tokens), fmt_k(sel.output_tokens)),
+        ))
         .child(mini_stat(t, "Cost", fmt_usd(sel.cost)))
         .child(mini_stat(t, "Score", format!("{:.2}", sel.score)))
 }
@@ -234,8 +302,19 @@ fn mini_stat(t: &Theme, label: &'static str, value: String) -> impl IntoElement 
         .flex_col()
         .gap(px(3.0))
         .min_w(px(96.0))
-        .child(div().text_size(px(9.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(label))
-        .child(div().text_size(px(13.0)).text_color(solid(t.text.t1)).child(value))
+        .child(
+            div()
+                .text_size(px(9.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(t.text.t5))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(13.0))
+                .text_color(solid(t.text.t1))
+                .child(value),
+        )
 }
 
 fn event_stream(t: &Theme, sel: &AgentRun) -> impl IntoElement {
@@ -262,7 +341,14 @@ fn event_row(t: &Theme, e: TraceEvent) -> impl IntoElement {
                 .w(px(14.0))
                 .flex_none()
                 .child(dot(px(9.0), e.hue))
-                .child(div().w(px(1.5)).flex_1().min_h(px(14.0)).bg(overlay(t.overlays.w07)).my(px(2.0))),
+                .child(
+                    div()
+                        .w(px(1.5))
+                        .flex_1()
+                        .min_h(px(14.0))
+                        .bg(overlay(t.overlays.w07))
+                        .my(px(2.0)),
+                ),
         )
         .child(
             div()
@@ -289,8 +375,19 @@ fn event_row(t: &Theme, e: TraceEvent) -> impl IntoElement {
                                 .text_color(solid(e.hue))
                                 .child(e.kind),
                         )
-                        .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(12.5)).text_color(solid(t.text.t1)).child(e.title)),
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_size(px(12.5))
+                                .text_color(solid(t.text.t1))
+                                .child(e.title),
+                        ),
                 )
-                .child(div().text_size(px(11.5)).text_color(solid(t.text.t3)).child(e.detail)),
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(solid(t.text.t3))
+                        .child(e.detail),
+                ),
         )
 }

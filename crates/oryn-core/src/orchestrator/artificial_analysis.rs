@@ -54,7 +54,10 @@ pub fn aa_weights() -> DimensionWeights {
 
 /// Read a number from a JSON value that may be a number or a numeric string.
 fn num(v: Option<&Value>) -> Option<f64> {
-    v.and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+    v.and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    })
 }
 
 /// Normalize an index that may be on a 0–100 scale to 0–1, clamped.
@@ -67,7 +70,8 @@ fn norm(score: f64) -> f64 {
 fn eval_containing(evals: &Value, needle: &str) -> Option<f64> {
     evals.as_object()?.iter().find_map(|(k, v)| {
         if k.to_lowercase().contains(needle) {
-            v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         } else {
             None
         }
@@ -80,7 +84,8 @@ fn eval_containing(evals: &Value, needle: &str) -> Option<f64> {
 ///
 /// [`SourceError::Malformed`] if the JSON is unparseable or yields no priced models.
 pub fn parse_aa(body: &str) -> Result<AaData, SourceError> {
-    let root: Value = serde_json::from_str(body).map_err(|e| SourceError::Malformed(e.to_string()))?;
+    let root: Value =
+        serde_json::from_str(body).map_err(|e| SourceError::Malformed(e.to_string()))?;
     let items = root
         .get("data")
         .and_then(Value::as_array)
@@ -102,7 +107,15 @@ pub fn parse_aa(body: &str) -> Result<AaData, SourceError> {
             let output = num(pricing.get("price_1m_output_tokens")).unwrap_or(0.0);
             let cache_read = num(pricing.get("price_1m_input_cache_read")).unwrap_or(0.0);
             let cache_write = num(pricing.get("price_1m_input_cache_write")).unwrap_or(0.0);
-            prices.insert(model.clone(), Pricing { input, output, cache_read, cache_write });
+            prices.insert(
+                model.clone(),
+                Pricing {
+                    input,
+                    output,
+                    cache_read,
+                    cache_write,
+                },
+            );
         }
 
         if let Some(evals) = item.get("evaluations") {
@@ -122,7 +135,10 @@ pub fn parse_aa(body: &str) -> Result<AaData, SourceError> {
     if prices.is_empty() {
         return Err(SourceError::Malformed("no priced models parsed".into()));
     }
-    Ok(AaData { prices, benchmarks: RawBenchmarks { metrics } })
+    Ok(AaData {
+        prices,
+        benchmarks: RawBenchmarks { metrics },
+    })
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -169,7 +185,10 @@ mod tests {
         let profiles = map_benchmarks(&aa.benchmarks, &aa_weights());
         // Debugging = 0.6*coding + 0.4*intelligence for opus = 0.6*0.62 + 0.4*0.70
         let expected = 0.6 * 0.62 + 0.4 * 0.70;
-        assert!((profiles[&ModelId::new("claude-opus")].score(SubtaskKind::Debugging) - expected).abs() < 1e-9);
+        assert!(
+            (profiles[&ModelId::new("claude-opus")].score(SubtaskKind::Debugging) - expected).abs()
+                < 1e-9
+        );
         // opus should out-score gpt-mini everywhere
         assert!(
             profiles[&ModelId::new("claude-opus")].score(SubtaskKind::DiffEdit)

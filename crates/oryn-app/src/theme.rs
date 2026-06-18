@@ -115,11 +115,36 @@ pub struct Accent {
 
 /// The five accents offered in Appearance settings.
 pub const ACCENTS: [Accent; 5] = [
-    Accent { name: "Violet", base: 0xC08CFF, bright: 0xD4ADFF, deep: 0x7C3AED },
-    Accent { name: "Blue", base: 0x7FA8FF, bright: 0xA6C6FF, deep: 0x2563EB },
-    Accent { name: "Green", base: 0x4ED99A, bright: 0x73E6B4, deep: 0x0F9D58 },
-    Accent { name: "Ember", base: 0xFF7A45, bright: 0xFF9468, deep: 0xD9531F },
-    Accent { name: "Amber", base: 0xFFB454, bright: 0xFFC97E, deep: 0xB5780E },
+    Accent {
+        name: "Violet",
+        base: 0xC08CFF,
+        bright: 0xD4ADFF,
+        deep: 0x7C3AED,
+    },
+    Accent {
+        name: "Blue",
+        base: 0x7FA8FF,
+        bright: 0xA6C6FF,
+        deep: 0x2563EB,
+    },
+    Accent {
+        name: "Green",
+        base: 0x4ED99A,
+        bright: 0x73E6B4,
+        deep: 0x0F9D58,
+    },
+    Accent {
+        name: "Ember",
+        base: 0xFF7A45,
+        bright: 0xFF9468,
+        deep: 0xD9531F,
+    },
+    Accent {
+        name: "Amber",
+        base: 0xFFB454,
+        bright: 0xFFC97E,
+        deep: 0xB5780E,
+    },
 ];
 
 /// Whether the app is in dark or light mode.
@@ -301,8 +326,14 @@ mod tests {
     #[test]
     fn resolve_matches_constructors() {
         let a = ACCENTS[2];
-        assert_eq!(Theme::resolve(Mode::Dark, a).surfaces.bg, Theme::dark(a).surfaces.bg);
-        assert_eq!(Theme::resolve(Mode::Light, a).surfaces.bg, Theme::light(a).surfaces.bg);
+        assert_eq!(
+            Theme::resolve(Mode::Dark, a).surfaces.bg,
+            Theme::dark(a).surfaces.bg
+        );
+        assert_eq!(
+            Theme::resolve(Mode::Light, a).surfaces.bg,
+            Theme::light(a).surfaces.bg
+        );
     }
 
     #[test]
