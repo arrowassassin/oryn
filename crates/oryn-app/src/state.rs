@@ -139,6 +139,10 @@ pub struct AgentRun {
     pub cost: f64,
     /// The winning attempt's response text (empty for non-winners).
     pub response: String,
+    /// Real worktree diff stats for the winner (0 for non-winners).
+    pub files_changed: usize,
+    pub added: usize,
+    pub removed: usize,
 }
 
 /// Deterministic accent color per framework, so the same framework reads the same
@@ -174,6 +178,9 @@ impl AgentRun {
             output_tokens: a.output_tokens,
             cost: a.cost_usd,
             response: a.response.clone(),
+            files_changed: a.files_changed,
+            added: a.added,
+            removed: a.removed,
         }
     }
 
@@ -478,6 +485,9 @@ mod tests {
             } else {
                 String::new()
             },
+            files_changed: if won { 2 } else { 0 },
+            added: if won { 10 } else { 0 },
+            removed: if won { 3 } else { 0 },
         }
     }
 

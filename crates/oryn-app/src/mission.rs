@@ -479,6 +479,26 @@ impl Root {
                     .text_color(solid(t.text.t5))
                     .child(format!("tier {}", a.tier_rank)),
             )
+            .when(a.won && a.files_changed > 0, |d| {
+                d.child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(solid(t.text.t5))
+                        .child(format!("· {} files", a.files_changed)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(solid(t.status.green))
+                        .child(format!("+{}", a.added)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(solid(t.status.red))
+                        .child(format!("−{}", a.removed)),
+                )
+            })
             .child(div().flex_1())
             .child(btn("tl", "Timeline", self.on(cx, Msg::OpenTimeline(idx))))
             .child(promote)
@@ -790,6 +810,9 @@ mod tests {
             output_tokens: 1,
             cost: 0.0,
             response: String::new(),
+            files_changed: 0,
+            added: 0,
+            removed: 0,
         };
         assert_eq!(status_label(&base), "Verified winner");
         assert_eq!(

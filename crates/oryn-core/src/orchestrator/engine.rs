@@ -16,6 +16,7 @@
 //! The concrete `ProcessRunner`/`Http` impls live in the app layer; everything
 //! here is pure wiring, fully testable with fakes.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -30,6 +31,7 @@ use crate::orchestrator::provider::{ExecutionTarget, ModelSpec, ProviderRegistry
 use crate::orchestrator::runner::{HarnessProvider, ProcessRunner};
 use crate::orchestrator::scheduler::{MissionResult, Orchestrator, OrchestratorError, Verdict};
 use crate::orchestrator::task::Mission;
+use crate::worktree::{WorktreeDiff, WorktreeManager};
 
 /// Configuration for the local advisor connection — the part the user chooses.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,6 +72,8 @@ impl Default for AdvisorConfig {
 pub struct EngineConfig {
     /// Local advisor connection (user-chosen endpoint + model).
     pub advisor: AdvisorConfig,
+    /// The git repository each worktree branches from.
+    pub repo_path: PathBuf,
     /// Root directory under which each target's isolated worktree is created.
     pub worktree_base: PathBuf,
     /// Default auth mode for harness CLIs (subscription login by default).
@@ -80,10 +84,24 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             advisor: AdvisorConfig::default(),
+            repo_path: PathBuf::from("."),
             worktree_base: PathBuf::from(".oryn/worktrees"),
             default_auth: AuthMode::Subscription,
         }
     }
+}
+
+/// The full artifacts of a worktree-backed run: the deterministic mission result
+/// plus the real on-disk worktree per target and the captured diff for each
+/// winning target.
+#[derive(Debug)]
+pub struct RunArtifacts {
+    /// The deterministic orchestrator result.
+    pub result: MissionResult,
+    /// The worktree directory created for each target.
+    pub worktrees: BTreeMap<ExecutionTarget, PathBuf>,
+    /// The captured diff for each target that won at least one subtask.
+    pub diffs: BTreeMap<ExecutionTarget, WorktreeDiff>,
 }
 
 /// Errors from an engine run.
@@ -134,12 +152,93 @@ impl Engine {
         &self.config.advisor.model
     }
 
-    /// Filesystem-safe worktree directory for `target`, under the configured base.
+    /// A filesystem- and git-ref-safe session id for `target`: `[A-Za-z0-9_-]`,
+    /// at most 64 chars (the bound [`WorktreeManager`] enforces).
+    pub fn session_id(target: &ExecutionTarget) -> String {
+        let raw = format!("oryn-{}-{}", target.framework, target.model.as_str());
+        let mut s: String = raw
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        s.truncate(64);
+        s
+    }
+
+    /// The worktree directory for `target`, under the configured base.
     pub fn worktree_for(&self, target: &ExecutionTarget) -> PathBuf {
-        let model = target.model.as_str().replace(['/', ':', ' ', '\\'], "-");
-        self.config
-            .worktree_base
-            .join(format!("oryn-{}-{}", target.framework, model))
+        self.config.worktree_base.join(Self::session_id(target))
+    }
+
+    /// The worktree manager rooted at the configured repo + base.
+    fn worktree_manager(&self) -> WorktreeManager {
+        WorktreeManager::new(&self.config.repo_path, &self.config.worktree_base)
+    }
+
+    /// Create a fresh, isolated git worktree for every spec, returning the path per
+    /// target. Each run starts clean: an existing worktree for a target is torn
+    /// down and recreated. When the repo isn't a git repository (or worktree
+    /// creation fails), it degrades to a plain directory so the harness still has a
+    /// working directory — never an error.
+    pub fn prepare_worktrees(&self, specs: &[ModelSpec]) -> BTreeMap<ExecutionTarget, PathBuf> {
+        let mgr = self.worktree_manager();
+        let mut map = BTreeMap::new();
+        for spec in specs {
+            let target = spec.target();
+            let id = Self::session_id(&target);
+            let path = self.config.worktree_base.join(&id);
+            let created = match mgr.create(&id) {
+                Ok(p) => p,
+                Err(_) => {
+                    // Stale worktree from a previous run, or not a git repo.
+                    let _ = mgr.remove(&id);
+                    mgr.create(&id).unwrap_or_else(|_| {
+                        let _ = std::fs::create_dir_all(&path);
+                        path.clone()
+                    })
+                }
+            };
+            map.insert(target, created);
+        }
+        map
+    }
+
+    /// Capture the diff of each target that won at least one subtask.
+    fn collect_diffs(
+        &self,
+        result: &MissionResult,
+        worktrees: &BTreeMap<ExecutionTarget, PathBuf>,
+    ) -> BTreeMap<ExecutionTarget, WorktreeDiff> {
+        let mgr = self.worktree_manager();
+        let mut diffs = BTreeMap::new();
+        for outcome in &result.outcomes {
+            if let Some(winner) = &outcome.winner
+                && !diffs.contains_key(winner)
+                && let Some(path) = worktrees.get(winner)
+                && let Ok(diff) = mgr.diff(path)
+            {
+                diffs.insert(winner.clone(), diff);
+            }
+        }
+        diffs
+    }
+
+    /// Tear down every target's worktree except `keep` (the promoted winner).
+    /// Best-effort and idempotent.
+    pub fn cleanup_worktrees(&self, specs: &[ModelSpec], keep: Option<&ExecutionTarget>) {
+        let mgr = self.worktree_manager();
+        for spec in specs {
+            let target = spec.target();
+            if Some(&target) == keep {
+                continue;
+            }
+            let _ = mgr.remove(&Self::session_id(&target));
+        }
     }
 
     /// Build a provider registry: one [`HarnessProvider`] per available spec, each
@@ -211,6 +310,37 @@ impl Engine {
         Ok(Orchestrator::run(
             mission, &registry, &matrix, prefix, &verifier,
         )?)
+    }
+
+    /// Run a mission with **real isolated worktrees**: create one git worktree per
+    /// target, execute the cascade so each harness runs in its own worktree, then
+    /// capture the diff of every winning target. Returns the full [`RunArtifacts`].
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Orchestrator`] on a dependency cycle or a sub-task with no
+    /// attemptable target.
+    pub fn run_mission_in_worktrees(
+        &self,
+        mission: &Mission,
+        available: &[ModelSpec],
+        profiles: &std::collections::BTreeMap<
+            crate::orchestrator::provider::ModelId,
+            crate::orchestrator::capability::CapabilityProfile,
+        >,
+        prefix: &CacheStablePrefix,
+    ) -> Result<RunArtifacts, EngineError> {
+        let worktrees = self.prepare_worktrees(available);
+        let matrix = resolve_matrix(available, profiles);
+        let registry = self.build_registry(available);
+        let verifier = self.verifier();
+        let result = Orchestrator::run(mission, &registry, &matrix, prefix, &verifier)?;
+        let diffs = self.collect_diffs(&result, &worktrees);
+        Ok(RunArtifacts {
+            result,
+            worktrees,
+            diffs,
+        })
     }
 }
 
@@ -319,6 +449,7 @@ mod tests {
         Engine::new(
             EngineConfig {
                 advisor: AdvisorConfig::new("http://localhost:11434", "qwen2.5-coder"),
+                repo_path: PathBuf::from("/repo"),
                 worktree_base: PathBuf::from("/wt"),
                 default_auth: AuthMode::Subscription,
             },
@@ -337,7 +468,7 @@ mod tests {
             AgentFramework::ClaudeCode,
             ModelId::new("opus:4.6"),
         ));
-        assert_eq!(wt, PathBuf::from("/wt/oryn-claude-code-opus-4.6"));
+        assert_eq!(wt, PathBuf::from("/wt/oryn-claude-code-opus-4-6"));
     }
 
     #[test]
@@ -401,6 +532,7 @@ mod tests {
         let e = Engine::new(
             EngineConfig {
                 advisor: AdvisorConfig::default(),
+                repo_path: PathBuf::from("/repo"),
                 worktree_base: PathBuf::from("/custom/base"),
                 default_auth: AuthMode::Subscription,
             },
@@ -419,6 +551,7 @@ mod tests {
         let e = Engine::new(
             EngineConfig {
                 advisor: AdvisorConfig::new("http://host:9999", "my-model"),
+                repo_path: PathBuf::from("/repo"),
                 worktree_base: PathBuf::from("/wt"),
                 default_auth: AuthMode::Subscription,
             },
@@ -439,5 +572,95 @@ mod tests {
         assert_eq!(c.endpoint, "http://localhost:11434");
         assert_eq!(c.model, "qwen2.5-coder");
         assert!(!c.fallback.passed, "unreachable advisor must not auto-pass");
+    }
+
+    #[test]
+    fn session_id_is_filesystem_safe() {
+        let id = Engine::session_id(&ExecutionTarget::new(
+            AgentFramework::ClaudeCode,
+            ModelId::new("anthropic/claude-opus-4.6:beta"),
+        ));
+        assert!(
+            id.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        );
+        assert!(id.len() <= 64);
+    }
+
+    // ── real worktree integration (temp git repo) ─────────────────────────────
+
+    /// A runner that writes a file into the worktree it's invoked in, so the run
+    /// produces a real, diffable change.
+    struct WritingRunner;
+    impl ProcessRunner for WritingRunner {
+        fn run(&self, inv: &HarnessInvocation) -> Result<ProcessOutput, RunError> {
+            std::fs::write(inv.cwd.join("agent_change.txt"), "the agent wrote this\n").map_err(
+                |e| RunError::Io {
+                    program: inv.program.clone(),
+                    reason: e.to_string(),
+                },
+            )?;
+            Ok(ProcessOutput {
+                stdout_lines: vec!["done".to_string()],
+                exit_code: 0,
+            })
+        }
+    }
+
+    fn init_repo_with_commit(path: &std::path::Path) {
+        let repo = git2::Repository::init(path).unwrap();
+        std::fs::write(path.join("seed.txt"), "seed\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("seed.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "seed", &tree, &[])
+            .unwrap();
+    }
+
+    #[test]
+    fn run_in_worktrees_creates_isolated_worktree_and_captures_diff() {
+        let repo = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().unwrap();
+        init_repo_with_commit(repo.path());
+
+        let engine = Engine::new(
+            EngineConfig {
+                advisor: AdvisorConfig::new("http://localhost:11434", "qwen2.5-coder"),
+                repo_path: repo.path().to_path_buf(),
+                worktree_base: base.path().to_path_buf(),
+                default_auth: AuthMode::Subscription,
+            },
+            Arc::new(WritingRunner),
+            Arc::new(PassHttp),
+            CapabilityCatalog::seed(),
+        );
+
+        let specs = vec![spec(
+            AgentFramework::Local,
+            "local-qwen-coder",
+            Pricing::ZERO,
+        )];
+        let profiles = CapabilityCatalog::seed().profiles;
+        let artifacts = engine
+            .run_mission_in_worktrees(&mission(), &specs, &profiles, &prefix())
+            .unwrap();
+
+        let target = specs[0].target();
+        // A real worktree directory was created and the agent's file is in it.
+        let wt = artifacts.worktrees.get(&target).expect("worktree created");
+        assert!(
+            wt.join("agent_change.txt").exists(),
+            "agent file present in worktree"
+        );
+        // The winner's diff was captured with the added line counted.
+        let diff = artifacts.diffs.get(&target).expect("winner diff captured");
+        assert!(diff.files.iter().any(|f| f.path == "agent_change.txt"));
+        assert!(diff.line_stats().0 >= 1, "at least one added line");
+
+        // Cleanup tears the worktree down.
+        engine.cleanup_worktrees(&specs, None);
+        assert!(!wt.exists(), "worktree removed by cleanup");
     }
 }

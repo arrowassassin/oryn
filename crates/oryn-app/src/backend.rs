@@ -350,9 +350,15 @@ fn worktree_base() -> PathBuf {
 /// Build a fully-wired engine for the user-chosen advisor `endpoint` + `model`,
 /// using the **pinned** `capability` snapshot, the real process runner, and the
 /// real HTTP client. Construction does no I/O.
-pub fn build_engine(endpoint: &str, model: &str, capability: &CapabilityCatalog) -> Engine {
+pub fn build_engine(
+    endpoint: &str,
+    model: &str,
+    repo_root: &std::path::Path,
+    capability: &CapabilityCatalog,
+) -> Engine {
     let config = EngineConfig {
         advisor: AdvisorConfig::new(endpoint, model),
+        repo_path: repo_root.to_path_buf(),
         worktree_base: worktree_base(),
         default_auth: AuthMode::Subscription,
     };
@@ -446,7 +452,8 @@ pub fn check_setup(
     bundle: &CatalogBundle,
 ) -> String {
     let (specs, _profiles) = discover_specs(adapters, bundle);
-    let engine = build_engine(endpoint, model, &bundle.capability);
+    let repo = RepoInfo::detect();
+    let engine = build_engine(endpoint, model, &repo.root, &bundle.capability);
     let advisor_status = probe_advisor(endpoint, model);
     format!(
         "{} model(s) discovered · pricing {} · worktrees {} · {}",
@@ -734,6 +741,11 @@ pub struct LiveAttempt {
     pub score: f64,
     pub won: bool,
     pub response: String,
+    /// Files changed in this target's worktree (winners only; 0 otherwise).
+    pub files_changed: usize,
+    /// Lines added / removed in the worktree diff (winners only).
+    pub added: usize,
+    pub removed: usize,
 }
 
 /// The full, real result of running a mission through the engine — what the UI
@@ -811,9 +823,10 @@ pub fn run_live(
         .task(goal)
         .build();
 
-    let engine = build_engine(endpoint, model, &bundle.capability);
-    match engine.run_mission_with(&mission, &specs, &profiles, &prefix) {
-        Ok(result) => {
+    let engine = build_engine(endpoint, model, &repo.root, &bundle.capability);
+    match engine.run_mission_in_worktrees(&mission, &specs, &profiles, &prefix) {
+        Ok(artifacts) => {
+            let result = &artifacts.result;
             let mut attempts = Vec::new();
             for outcome in &result.outcomes {
                 for attempt in &outcome.attempts {
@@ -822,6 +835,19 @@ pub fn run_live(
                         .map(|p| cost_usd(&attempt.usage, p))
                         .unwrap_or(0.0);
                     let won = outcome.winner.as_ref() == Some(&attempt.target);
+                    // Real diff stats for the winning target's worktree.
+                    let (files_changed, added, removed) = if won {
+                        artifacts
+                            .diffs
+                            .get(&attempt.target)
+                            .map(|d| {
+                                let (a, r) = d.line_stats();
+                                (d.file_count(), a, r)
+                            })
+                            .unwrap_or((0, 0, 0))
+                    } else {
+                        (0, 0, 0)
+                    };
                     attempts.push(LiveAttempt {
                         subtask: outcome.subtask.to_string(),
                         framework: attempt.target.framework.to_string(),
@@ -838,6 +864,9 @@ pub fn run_live(
                         } else {
                             String::new()
                         },
+                        files_changed,
+                        added,
+                        removed,
                     });
                 }
             }

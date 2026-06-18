@@ -106,6 +106,27 @@ impl WorktreeDiff {
     pub fn raw(&self) -> String {
         self.files.iter().map(|f| f.patch.as_str()).collect()
     }
+
+    /// Added/removed line counts across all files, parsed from the unified
+    /// patches. File headers (`+++`/`---`) are excluded so only real content
+    /// lines are counted.
+    pub fn line_stats(&self) -> (usize, usize) {
+        let mut added = 0;
+        let mut removed = 0;
+        for file in &self.files {
+            for line in file.patch.lines() {
+                if line.starts_with("+++") || line.starts_with("---") {
+                    continue;
+                }
+                match line.as_bytes().first() {
+                    Some(b'+') => added += 1,
+                    Some(b'-') => removed += 1,
+                    _ => {}
+                }
+            }
+        }
+        (added, removed)
+    }
 }
 
 /// Validate a session id used in filesystem paths and git ref names. Strict
@@ -311,6 +332,19 @@ mod tests {
         assert!(f.patch.contains("agent wrote this"));
         assert!(diff.raw().contains("new.txt"));
         assert_eq!(diff.file_count(), 1);
+    }
+
+    #[test]
+    fn line_stats_counts_added_and_removed() {
+        let fx = fixture();
+        let wt = fx.mgr.create("sess_stats").unwrap();
+        // One new file (adds) and a modification (add + remove).
+        fs::write(wt.join("new.txt"), "alpha\nbeta\n").unwrap();
+        fs::write(wt.join("README.md"), "changed\n").unwrap();
+        let diff = fx.mgr.diff(&wt).unwrap();
+        let (added, removed) = diff.line_stats();
+        assert!(added >= 3, "expected >=3 added, got {added}");
+        assert!(removed >= 1, "expected >=1 removed, got {removed}");
     }
 
     #[test]
