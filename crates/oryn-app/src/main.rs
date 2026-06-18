@@ -12,6 +12,7 @@
 mod colors;
 mod launcher;
 mod mission;
+mod settings;
 mod theme;
 
 use gpui::prelude::FluentBuilder;
@@ -288,6 +289,7 @@ impl Root {
             .child(match self.screen {
                 Screen::Mission => mission::mission_control_any(t, &self.agents),
                 Screen::Launch => launcher::launcher_any(t, &self.adapters),
+                Screen::Settings => settings::settings_any(t),
                 other => self.placeholder(other),
             })
     }
