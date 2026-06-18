@@ -13,5 +13,6 @@
 //! Later modules in this crate extend the pipeline with scheduling, agent
 //! selection, budget enforcement, and result aggregation.
 
+pub mod prefix;
 pub mod provider;
 pub mod task;
