@@ -965,6 +965,7 @@ pub fn run_live(
     bundle: &CatalogBundle,
     repo: &RepoInfo,
     goal: &str,
+    progress: &mut dyn FnMut(usize, usize),
 ) -> LiveReport {
     use oryn_core::orchestrator::cost::cost_usd;
     use oryn_core::orchestrator::decompose::decompose;
@@ -1006,7 +1007,7 @@ pub fn run_live(
         .build();
 
     let engine = build_engine(endpoint, model, &repo.root, &bundle.capability);
-    match engine.run_mission_in_worktrees(&mission, &specs, &profiles, &prefix) {
+    match engine.run_mission_in_worktrees(&mission, &specs, &profiles, &prefix, progress) {
         Ok(artifacts) => {
             let result = &artifacts.result;
             let mut attempts = Vec::new();
@@ -1148,6 +1149,7 @@ mod tests {
             &bundle,
             &repo,
             "Fix the flaky token-refresh race and add a test",
+            &mut |_, _| {},
         );
         assert_eq!(report.discovered, 0);
         assert!(report.attempts.is_empty());

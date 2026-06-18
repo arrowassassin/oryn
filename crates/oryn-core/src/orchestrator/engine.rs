@@ -335,6 +335,7 @@ impl Engine {
             crate::orchestrator::capability::CapabilityProfile,
         >,
         prefix: &CacheStablePrefix,
+        progress: &mut dyn FnMut(usize, usize),
     ) -> Result<RunArtifacts, EngineError> {
         let worktrees = self.prepare_worktrees(available);
         let matrix = resolve_matrix(available, profiles);
@@ -347,7 +348,9 @@ impl Engine {
             command,
             self.verifier(),
         );
-        let result = Orchestrator::run(mission, &registry, &matrix, prefix, &verifier)?;
+        let result = Orchestrator::run_with_progress(
+            mission, &registry, &matrix, prefix, &verifier, progress,
+        )?;
         let diffs = self.collect_diffs(&result, &worktrees);
         Ok(RunArtifacts {
             result,
@@ -661,7 +664,7 @@ mod tests {
         )];
         let profiles = CapabilityCatalog::seed().profiles;
         let artifacts = engine
-            .run_mission_in_worktrees(&mission(), &specs, &profiles, &prefix())
+            .run_mission_in_worktrees(&mission(), &specs, &profiles, &prefix(), &mut |_, _| {})
             .unwrap();
 
         let target = specs[0].target();
@@ -730,7 +733,7 @@ mod tests {
         )];
         let profiles = CapabilityCatalog::seed().profiles;
         let artifacts = engine
-            .run_mission_in_worktrees(&mission(), &specs, &profiles, &prefix())
+            .run_mission_in_worktrees(&mission(), &specs, &profiles, &prefix(), &mut |_, _| {})
             .unwrap();
         artifacts.result.outcomes[0].attempts[0].verdict.passed
     }

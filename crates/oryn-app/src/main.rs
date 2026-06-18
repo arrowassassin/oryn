@@ -75,6 +75,14 @@ pub(crate) fn view_header(
         )
 }
 
+/// Messages streamed from the background run thread to the GUI.
+enum RunMsg {
+    /// `done`/`total` subtasks completed so far.
+    Progress { done: usize, total: usize },
+    /// The run finished; carries the final report (boxed — it's large).
+    Done(Box<LiveReport>),
+}
+
 /// Which primary view is active in the main area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -241,17 +249,59 @@ impl Root {
         let repo = self.repo.clone();
         let task = self.task.clone();
 
+        // Stream per-subtask progress from the blocking engine call (background
+        // thread) to the GUI over a channel; the foreground task polls it and
+        // updates the live note, then ingests the final report.
+        let (tx, rx) = std::sync::mpsc::channel::<RunMsg>();
         let task_handle = cx.spawn(async move |weak, cx| {
-            let report = cx
-                .background_executor()
+            cx.background_executor()
                 .spawn(async move {
-                    backend::run_live(&adapters, &endpoint, &model, &bundle, &repo, &task)
+                    let report = backend::run_live(
+                        &adapters,
+                        &endpoint,
+                        &model,
+                        &bundle,
+                        &repo,
+                        &task,
+                        &mut |done, total| {
+                            let _ = tx.send(RunMsg::Progress { done, total });
+                        },
+                    );
+                    let _ = tx.send(RunMsg::Done(Box::new(report)));
                 })
-                .await;
-            let _ = weak.update(cx, |this, cx| {
-                this.ingest_report(report);
-                cx.notify();
-            });
+                .detach();
+
+            loop {
+                let mut report = None;
+                while let Ok(msg) = rx.try_recv() {
+                    match msg {
+                        RunMsg::Progress { done, total } => {
+                            let _ = weak.update(cx, |this, cx| {
+                                this.run_note = format!("routing subtask {done}/{total}…");
+                                cx.notify();
+                            });
+                        }
+                        RunMsg::Done(r) => report = Some(*r),
+                    }
+                }
+                if let Some(report) = report {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.ingest_report(report);
+                        cx.notify();
+                    });
+                    break;
+                }
+                // Stop if the view is gone (window closed) or the run was cancelled.
+                let alive = weak
+                    .update(cx, |this, _| this.phase == Phase::Running)
+                    .unwrap_or(false);
+                if !alive {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(60))
+                    .await;
+            }
         });
         self._run = Some(task_handle);
     }

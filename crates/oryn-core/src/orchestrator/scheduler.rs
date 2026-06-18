@@ -152,7 +152,22 @@ impl Orchestrator {
         prefix: &CacheStablePrefix,
         verifier: &dyn Verifier,
     ) -> Result<MissionResult, OrchestratorError> {
+        Self::run_with_progress(mission, registry, matrix, prefix, verifier, &mut |_, _| {})
+    }
+
+    /// Like [`run`](Self::run) but invokes `progress(done, total)` after each
+    /// subtask completes — so a client can stream live "subtask N/M" progress
+    /// while the deterministic cascade proceeds. `total` is the subtask count.
+    pub fn run_with_progress(
+        mission: &Mission,
+        registry: &ProviderRegistry,
+        matrix: &CapabilityMatrix,
+        prefix: &CacheStablePrefix,
+        verifier: &dyn Verifier,
+        progress: &mut dyn FnMut(usize, usize),
+    ) -> Result<MissionResult, OrchestratorError> {
         let order = mission.topo_order()?;
+        let total = order.len();
 
         // Index subtasks by id for O(log n) lookup during the walk.
         let by_id: BTreeMap<&SubtaskId, &Subtask> =
@@ -160,9 +175,9 @@ impl Orchestrator {
 
         let rendered_prefix = prefix.render();
         let mut spend = Spend::ZERO;
-        let mut outcomes = Vec::with_capacity(order.len());
+        let mut outcomes = Vec::with_capacity(total);
 
-        for id in &order {
+        for (done, id) in order.iter().enumerate() {
             let subtask = by_id.get(id).expect("topo_order id is a mission subtask");
             let outcome = Self::run_subtask(
                 subtask,
@@ -173,6 +188,7 @@ impl Orchestrator {
                 &mut spend,
             )?;
             outcomes.push(outcome);
+            progress(done + 1, total);
         }
 
         Ok(MissionResult { outcomes, spend })
@@ -738,6 +754,44 @@ mod tests {
         let o = &result.outcomes[0];
         assert_eq!(o.attempts.len(), 1, "erroring provider makes no attempt");
         assert_eq!(o.winner.as_ref(), Some(&good));
+    }
+
+    #[test]
+    fn run_with_progress_reports_each_subtask_in_order() {
+        let t = target(AgentFramework::Local, "m");
+        let mut reg = ProviderRegistry::new();
+        reg.register(Box::new(FakeProvider::new(
+            AgentFramework::Local,
+            "m",
+            Pricing::ZERO,
+            usage_with_cache(),
+        )));
+        let matrix = CapabilityMatrix::new()
+            .with(SubtaskKind::Debugging, vec![t.clone()])
+            .with(SubtaskKind::TestGen, vec![t.clone()]);
+        let verifier = FakeVerifier::new(&[("local/m", true, 0.9)]);
+        let m = mission(vec![
+            subtask("a", SubtaskKind::Debugging),
+            subtask("b", SubtaskKind::TestGen),
+        ]);
+
+        let mut calls = Vec::new();
+        let result = Orchestrator::run_with_progress(
+            &m,
+            &reg,
+            &matrix,
+            &prefix(),
+            &verifier,
+            &mut |d, t| calls.push((d, t)),
+        )
+        .unwrap();
+
+        assert_eq!(result.outcomes.len(), 2);
+        assert_eq!(
+            calls,
+            vec![(1, 2), (2, 2)],
+            "progress fires once per subtask, in order"
+        );
     }
 
     // ── no candidates ──────────────────────────────────────────────────────────
