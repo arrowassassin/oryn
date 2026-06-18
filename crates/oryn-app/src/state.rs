@@ -117,6 +117,29 @@ pub enum Msg {
     Promote(usize),
     /// Choose the local advisor model from [`ADVISOR_MODELS`].
     SetAdvisorModel(usize),
+    /// Choose where pricing + benchmark data comes from.
+    SetCatalogSource(CatalogSource),
+}
+
+/// Where the model catalog's pricing + benchmark data is sourced from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogSource {
+    /// OpenRouter (pricing) + the public Aider leaderboard (benchmarks). No key.
+    Keyless,
+    /// Artificial Analysis — pricing + benchmarks in one API (needs a free key).
+    ArtificialAnalysis,
+}
+
+impl CatalogSource {
+    /// Default to Artificial Analysis when an API key is present (richer data),
+    /// else the keyless OpenRouter + Aider combo.
+    pub fn default_from_env() -> Self {
+        if std::env::var("ARTIFICIALANALYSIS_API_KEY").is_ok_and(|k| !k.is_empty()) {
+            CatalogSource::ArtificialAnalysis
+        } else {
+            CatalogSource::Keyless
+        }
+    }
 }
 
 /// Local advisor models the user can pick in Settings (deterministic + reasoning).
@@ -173,6 +196,10 @@ impl Root {
                     self.advisor.model = (*m).to_string();
                     self.advisor.status = None;
                 }
+            }
+            Msg::SetCatalogSource(s) => {
+                self.catalog_source = s;
+                self.source_status = None;
             }
         }
     }

@@ -30,7 +30,7 @@ use colors::{overlay, solid};
 use launcher::Adapter;
 use mission::{AgentRun, fmt_usd};
 use oryn_core::orchestrator::catalog_store::CatalogBundle;
-use state::{AdvisorPrefs, Msg, Settings};
+use state::{AdvisorPrefs, CatalogSource, Msg, Settings};
 use theme::Theme;
 
 /// A simple view header: an uppercase kicker over a large title. Shared by the
@@ -76,6 +76,10 @@ pub struct Root {
     pub advisor: AdvisorPrefs,
     /// The pinned model catalog (capability + live pricing) for this session.
     pub catalog: CatalogBundle,
+    /// Where catalog pricing + benchmark data is fetched from.
+    pub catalog_source: CatalogSource,
+    /// Last data-source verification result, shown in Settings.
+    pub source_status: Option<String>,
     /// Background ticker driving the simulation (None in headless tests).
     _timer: Option<Task<()>>,
     /// Background ticker refreshing the parked catalog on an interval.
@@ -103,7 +107,11 @@ impl Root {
         // 30 min check staleness and re-park if a refresh is due (offline-safe).
         let catalog_timer = cx.spawn(async move |weak, cx| {
             loop {
-                let bundle = cx.background_executor().spawn(async { backend::load_catalog() }).await;
+                // Read the user's current source choice before each refresh.
+                let Ok(source) = weak.update(cx, |this, _| this.catalog_source) else {
+                    break;
+                };
+                let bundle = cx.background_executor().spawn(async move { backend::load_catalog(source) }).await;
                 let alive = weak
                     .update(cx, |this, cx| {
                         this.catalog = bundle;
@@ -135,6 +143,8 @@ impl Root {
             playing: true,
             advisor: AdvisorPrefs::from_env(),
             catalog: CatalogBundle::seed(),
+            catalog_source: CatalogSource::default_from_env(),
+            source_status: None,
             _timer: None,
             _catalog_timer: None,
         }

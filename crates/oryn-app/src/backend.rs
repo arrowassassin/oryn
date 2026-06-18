@@ -13,7 +13,7 @@ use oryn_core::orchestrator::advisor::{Http, HttpError, LocalAdvisor, OllamaAdvi
 use oryn_core::orchestrator::artificial_analysis::{aa_weights, parse_aa};
 use oryn_core::orchestrator::catalog::{
     CapabilityCatalog, CapabilitySource, CatalogProvenance, RawBenchmarks, SourceError,
-    default_weights, parse_scored_list,
+    default_weights, parse_aider_leaderboard,
 };
 use oryn_core::orchestrator::catalog_store::{
     CatalogBundle, RefreshPolicy, Store, StoreError, load_and_maybe_refresh,
@@ -29,6 +29,7 @@ use oryn_core::orchestrator::task::{Subtask, SubtaskId, SubtaskKind};
 use std::collections::BTreeMap;
 
 use crate::launcher::Adapter;
+use crate::state::CatalogSource;
 
 /// Capability score assigned to a discovered model we have no benchmark data for
 /// yet — enough to keep it routable until real benchmarks arrive.
@@ -120,33 +121,28 @@ impl PricingSource for OpenRouterPricing {
     }
 }
 
-/// Live capability scores from a benchmark leaderboard JSON URL (`ORYN_BENCHMARK_URL`).
-/// When no URL is configured it reports unavailable, so the parked/seed capability
-/// is kept unchanged.
-pub struct HttpBenchmarkSource {
-    url: Option<String>,
-    dimension: String,
+/// Keyless capability source: the public **Aider polyglot leaderboard** YAML on
+/// GitHub raw (no API key, free).
+pub struct AiderLeaderboard {
+    url: String,
 }
 
-impl HttpBenchmarkSource {
-    /// Source from `ORYN_BENCHMARK_URL` (+ `ORYN_BENCHMARK_DIMENSION`, default
-    /// `aider-polyglot`).
+impl AiderLeaderboard {
+    /// Source from `ORYN_AIDER_URL`, else the aider repo's published leaderboard.
     pub fn from_env() -> Self {
-        Self {
-            url: std::env::var("ORYN_BENCHMARK_URL").ok().filter(|s| !s.is_empty()),
-            dimension: std::env::var("ORYN_BENCHMARK_DIMENSION").unwrap_or_else(|_| "aider-polyglot".into()),
-        }
+        let url = std::env::var("ORYN_AIDER_URL").unwrap_or_else(|_| {
+            "https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/_data/polyglot_leaderboard.yml".into()
+        });
+        Self { url }
     }
 }
 
-impl CapabilitySource for HttpBenchmarkSource {
+impl CapabilitySource for AiderLeaderboard {
     fn id(&self) -> &str {
-        "http-benchmark"
+        "aider-polyglot"
     }
     fn fetch(&self) -> Result<RawBenchmarks, SourceError> {
-        let url = self.url.as_deref().ok_or(SourceError::Unavailable)?;
-        let body = http_get(url)?;
-        parse_scored_list(&body, &self.dimension)
+        parse_aider_leaderboard(&http_get(&self.url)?)
     }
 }
 
@@ -215,24 +211,59 @@ fn refresh_policy() -> RefreshPolicy {
 
 /// Load the parked catalog and refresh it from the live sources if stale,
 /// re-parking the result. Offline-safe: keeps parked/seed data when a source is
-/// down.
+/// down. Safe on a background thread.
 ///
-/// **Source precedence:** Artificial Analysis (pricing + benchmarks in one) when an
-/// API key is configured; otherwise OpenRouter for pricing plus an optional
-/// benchmark URL for capability. This is the "check and refresh for the model
-/// you're loading, keep it parked" entrypoint — safe on a background thread.
-pub fn load_catalog() -> CatalogBundle {
+/// The user chooses the [`CatalogSource`]:
+/// - [`CatalogSource::ArtificialAnalysis`] — pricing **and** benchmarks from one
+///   API (needs `ARTIFICIALANALYSIS_API_KEY`); falls back to keyless if no key.
+/// - [`CatalogSource::Keyless`] — OpenRouter pricing + the public Aider polyglot
+///   leaderboard. No key, free.
+pub fn load_catalog(source: CatalogSource) -> CatalogBundle {
     let store = FsStore::from_env();
     let policy = refresh_policy();
     let now = now_unix();
-    match ArtificialAnalysis::from_env() {
-        // Preferred: one source for both pricing and benchmarks.
-        Some(aa) => load_and_maybe_refresh(&store, policy, &aa, &aa_weights(), &aa, now),
-        // Fallback: OpenRouter pricing + optional benchmark leaderboard.
-        None => {
-            let benchmark = HttpBenchmarkSource::from_env();
+    match source {
+        CatalogSource::ArtificialAnalysis => {
+            if let Some(aa) = ArtificialAnalysis::from_env() {
+                return load_and_maybe_refresh(&store, policy, &aa, &aa_weights(), &aa, now);
+            }
+            // No key → keyless fallback.
+            keyless_refresh(&store, policy, now)
+        }
+        CatalogSource::Keyless => keyless_refresh(&store, policy, now),
+    }
+}
+
+fn keyless_refresh(store: &FsStore, policy: RefreshPolicy, now: u64) -> CatalogBundle {
+    let benchmark = AiderLeaderboard::from_env();
+    let pricing = OpenRouterPricing::from_env();
+    load_and_maybe_refresh(store, policy, &benchmark, &default_weights(), &pricing, now)
+}
+
+/// Make a **real** call to the chosen source and report what came back — the
+/// "verify" the UI triggers. For Artificial Analysis this validates the API key.
+pub fn verify_source(source: CatalogSource) -> String {
+    let now = now_unix();
+    match source {
+        CatalogSource::ArtificialAnalysis => match ArtificialAnalysis::from_env() {
+            None => "Artificial Analysis: no ARTIFICIALANALYSIS_API_KEY set".to_string(),
+            Some(aa) => match PricingSource::fetch(&aa, now) {
+                Ok(table) => format!("AA key OK · {} models priced + benchmarked", table.prices.len()),
+                Err(e) => format!("AA error (check key/host): {e}"),
+            },
+        },
+        CatalogSource::Keyless => {
             let pricing = OpenRouterPricing::from_env();
-            load_and_maybe_refresh(&store, policy, &benchmark, &default_weights(), &pricing, now)
+            let bench = AiderLeaderboard::from_env();
+            let p = match PricingSource::fetch(&pricing, now) {
+                Ok(t) => format!("OpenRouter {} prices", t.prices.len()),
+                Err(e) => format!("OpenRouter err ({e})"),
+            };
+            let b = match CapabilitySource::fetch(&bench) {
+                Ok(r) => format!("Aider {} models", r.metrics.len()),
+                Err(e) => format!("Aider err ({e})"),
+            };
+            format!("{p} · {b}")
         }
     }
 }

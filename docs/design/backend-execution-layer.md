@@ -212,8 +212,18 @@ Routing cost and capability are **data sourced live and pinned**, not nominal:
 - `oryn-core::orchestrator::pricing` — fallback pricing: `PricingTable` +
   `parse_openrouter_models` (OpenRouter `/api/v1/models` → USD-per-million, pricing
   only) + `PricingSource` trait + seed.
-- `oryn-core::orchestrator::catalog::parse_scored_list` — pure parser for a generic
-  leaderboard JSON into capability scores (fallback benchmark source).
+- `oryn-core::orchestrator::catalog::parse_aider_leaderboard` — keyless parser for
+  the public Aider polyglot leaderboard YAML (GitHub raw) into capability scores;
+  `parse_scored_list` parses a generic leaderboard JSON.
+
+**The user chooses the source** (Settings → *Data source*), with in-UI guidance:
+- **Keyless** (default when no key): OpenRouter pricing + the Aider polyglot
+  leaderboard. Free, no key, one coding benchmark.
+- **Artificial Analysis** (default when `ARTIFICIALANALYSIS_API_KEY` is set):
+  pricing + richer benchmarks in one feed; best routing quality; needs a free key.
+A "Verify" button makes a **real** call to the chosen source — for AA it validates
+the API key — and reports the result. The background refresher uses the current
+choice.
 - `oryn-core::orchestrator::catalog_store` — `CatalogBundle` (capability +
   pricing) parked via a `Store`; `RefreshPolicy`/`is_stale`; `refresh_or_keep`
   (offline-safe — keeps parked data when a source is down); `load_and_maybe_refresh`

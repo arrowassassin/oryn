@@ -10,7 +10,7 @@ use gpui::{AnyElement, Context, FontWeight, ParentElement, SharedString, Styled,
 
 use crate::Root;
 use crate::colors::{overlay, solid, tint};
-use crate::state::{ADVISOR_MODELS, Density, FontChoice, Msg, ThemeChoice};
+use crate::state::{ADVISOR_MODELS, CatalogSource, Density, FontChoice, Msg, ThemeChoice};
 use crate::theme::{ACCENTS, Theme};
 
 impl Root {
@@ -50,7 +50,85 @@ impl Root {
             .child(self.run_defaults_card(cx, t))
             .child(self.privacy_card(cx, t))
             .child(self.advisor_card(cx, t))
+            .child(self.data_source_card(cx, t))
             .child(worktree_card(t))
+    }
+
+    fn data_source_card(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
+        let aa = self.catalog_source == CatalogSource::ArtificialAnalysis;
+        let seg = self.segmented(
+            cx,
+            t,
+            "catsrc",
+            vec![
+                ("OpenRouter + Aider", Msg::SetCatalogSource(CatalogSource::Keyless), !aa),
+                ("Artificial Analysis", Msg::SetCatalogSource(CatalogSource::ArtificialAnalysis), aa),
+            ],
+        );
+        let guidance: &'static str = if aa {
+            "Artificial Analysis — pricing + benchmarks in one feed; best routing quality. \
+             Needs a free API key in ARTIFICIALANALYSIS_API_KEY."
+        } else {
+            "Keyless — OpenRouter pricing + the public Aider polyglot leaderboard. Free, no key; \
+             a single coding benchmark. Good default; switch to Artificial Analysis for richer data."
+        };
+
+        let verify = div()
+            .id("srcverify")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(30.0))
+            .px(px(13.0))
+            .rounded(px(8.0))
+            .bg(overlay(t.overlays.w05))
+            .border_1()
+            .border_color(overlay(t.overlays.w09))
+            .text_size(px(11.5))
+            .text_color(solid(t.text.t2))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _ev: &gpui::ClickEvent, _win, cx| {
+                this.source_status = Some("verifying…".into());
+                cx.notify();
+                let source = this.catalog_source;
+                cx.spawn(async move |weak, cx| {
+                    let status = cx
+                        .background_executor()
+                        .spawn(async move { crate::backend::verify_source(source) })
+                        .await;
+                    let _ = weak.update(cx, |this, cx| {
+                        this.source_status = Some(status);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }))
+            .child("Verify");
+
+        let status_line: SharedString =
+            self.source_status.clone().unwrap_or_else(|| "not verified".to_string()).into();
+
+        card(
+            t,
+            "DATA SOURCE · PRICING + BENCHMARKS",
+            div()
+                .flex()
+                .flex_col()
+                .child(setting_row(t, "Source", "drives cost + capability routing", seg))
+                .child(div().py(px(8.0)).text_size(px(10.5)).text_color(solid(t.text.t5)).child(guidance))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.0))
+                        .pt(px(12.0))
+                        .border_t_1()
+                        .border_color(overlay(t.overlays.w05))
+                        .child(div().flex_1().text_size(px(11.0)).text_color(solid(t.text.t5)).child(status_line))
+                        .child(verify),
+                ),
+        )
     }
 
     fn advisor_card(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {

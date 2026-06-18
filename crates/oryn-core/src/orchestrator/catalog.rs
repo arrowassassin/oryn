@@ -201,6 +201,65 @@ pub fn parse_scored_list(body: &str, dimension: &str) -> Result<RawBenchmarks, S
     Ok(RawBenchmarks { metrics })
 }
 
+/// Parse the public **Aider polyglot leaderboard** YAML into [`RawBenchmarks`] for
+/// the `aider-polyglot` dimension. Keyless — the file lives in the aider repo
+/// (`…/_data/polyglot_leaderboard.yml`) and is fetchable from GitHub raw.
+///
+/// Each list item carries a `model:` and pass rates; the overall score prefers
+/// `pass_rate_2`, then `pass_rate_1`, then `percent_cases_well_formed`, normalized
+/// to `0.0..=1.0`. A minimal YAML-subset reader (list items + `key: value`) keeps
+/// this dependency-free and tolerant of extra fields.
+pub fn parse_aider_leaderboard(text: &str) -> Result<RawBenchmarks, SourceError> {
+    #[derive(Default)]
+    struct Item {
+        model: Option<String>,
+        pr2: Option<f64>,
+        pr1: Option<f64>,
+        pct: Option<f64>,
+    }
+
+    let mut metrics: BTreeMap<ModelId, BTreeMap<String, f64>> = BTreeMap::new();
+    let mut cur = Item::default();
+
+    let mut flush = |item: &mut Item| {
+        if let Some(model) = item.model.take()
+            && let Some(score) = item.pr2.or(item.pr1).or(item.pct)
+        {
+            let norm = if score > 1.0 { score / 100.0 } else { score };
+            metrics
+                .entry(ModelId::new(model))
+                .or_default()
+                .insert("aider-polyglot".to_string(), norm.clamp(0.0, 1.0));
+        }
+        *item = Item::default();
+    };
+
+    for raw in text.lines() {
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("- ") || trimmed == "-" {
+            flush(&mut cur);
+        }
+        // Strip an optional leading "- " so the first field of an item parses too.
+        let kv = trimmed.trim_start_matches('-').trim();
+        if let Some((key, value)) = kv.split_once(':') {
+            let value = value.trim().trim_matches('"');
+            match key.trim() {
+                "model" if !value.is_empty() => cur.model = Some(value.to_string()),
+                "pass_rate_2" => cur.pr2 = value.parse().ok(),
+                "pass_rate_1" => cur.pr1 = value.parse().ok(),
+                "percent_cases_well_formed" => cur.pct = value.parse().ok(),
+                _ => {}
+            }
+        }
+    }
+    flush(&mut cur);
+
+    if metrics.is_empty() {
+        return Err(SourceError::Malformed("no leaderboard entries".into()));
+    }
+    Ok(RawBenchmarks { metrics })
+}
+
 // ── SourceError ────────────────────────────────────────────────────────────────
 
 /// Errors a [`CapabilitySource`] can return.
@@ -582,5 +641,36 @@ mod tests {
         assert!(parse_scored_list("{}", "d").is_err());
         assert!(parse_scored_list("garbage", "d").is_err());
         assert!(parse_scored_list("[]", "d").is_err());
+    }
+
+    // ── parse_aider_leaderboard ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_aider_leaderboard_extracts_models_and_pass_rate_2() {
+        let yaml = "\
+- dirname: 2024-12-21-claude
+  model: claude-3.5-sonnet
+  pass_rate_1: 70.0
+  pass_rate_2: 84.2
+  percent_cases_well_formed: 99.6
+- dirname: 2024-12-21-gpt
+  model: gpt-4o
+  pass_rate_2: 33.3
+";
+        let raw = parse_aider_leaderboard(yaml).unwrap();
+        approx(raw.metrics[&ModelId::new("claude-3.5-sonnet")]["aider-polyglot"], 0.842);
+        approx(raw.metrics[&ModelId::new("gpt-4o")]["aider-polyglot"], 0.333);
+    }
+
+    #[test]
+    fn parse_aider_leaderboard_falls_back_when_pass_rate_2_absent() {
+        let yaml = "- model: m1\n  pass_rate_1: 50.0\n";
+        let raw = parse_aider_leaderboard(yaml).unwrap();
+        approx(raw.metrics[&ModelId::new("m1")]["aider-polyglot"], 0.50);
+    }
+
+    #[test]
+    fn parse_aider_leaderboard_rejects_empty() {
+        assert!(parse_aider_leaderboard("# just a comment\n").is_err());
     }
 }
