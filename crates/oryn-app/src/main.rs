@@ -151,6 +151,10 @@ impl Root {
         });
 
         let mut root = Self::headless();
+        // Restore persisted preferences over the env-derived defaults.
+        if let Some(cfg) = backend::load_config() {
+            root.apply_config(cfg);
+        }
         root.task_focus = Some(cx.focus_handle());
         root._catalog_timer = Some(catalog_timer);
         root

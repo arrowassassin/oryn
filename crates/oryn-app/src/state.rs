@@ -10,6 +10,7 @@
 //! [`crate::backend::LiveReport`] produced by the orchestrator.
 
 use gpui::{App, ClickEvent, Context, Window};
+use serde::{Deserialize, Serialize};
 
 use crate::Root;
 use crate::Screen;
@@ -19,7 +20,7 @@ use crate::theme::{ACCENTS, Accent, Mode, Rgb, Theme};
 // ── settings ──────────────────────────────────────────────────────────────────
 
 /// Theme selection (Auto resolves to Dark — no system signal is available).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
     Dark,
     Light,
@@ -27,7 +28,7 @@ pub enum ThemeChoice {
 }
 
 /// Row-height / padding density.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Density {
     Compact,
     Comfortable,
@@ -35,7 +36,7 @@ pub enum Density {
 }
 
 /// UI font family choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FontChoice {
     Geist,
     IbmPlex,
@@ -43,7 +44,7 @@ pub enum FontChoice {
 }
 
 /// User preferences, applied live across the app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub theme: ThemeChoice,
     pub accent_idx: usize,
@@ -210,7 +211,7 @@ pub enum Msg {
 }
 
 /// Where the model catalog's pricing + benchmark data is sourced from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogSource {
     /// OpenRouter (pricing) + the public Aider leaderboard (benchmarks). No key.
     Keyless,
@@ -240,13 +241,14 @@ pub const ADVISOR_MODELS: [&str; 5] = [
 ];
 
 /// User-chosen connection to the local advisor model.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdvisorPrefs {
     /// OpenAI-compatible endpoint base URL (Ollama / llamafile / llama.cpp).
     pub endpoint: String,
     /// The selected model name.
     pub model: String,
-    /// Last readiness-check result, shown in Settings.
+    /// Last readiness-check result, shown in Settings. Transient — never persisted.
+    #[serde(skip)]
     pub status: Option<String>,
 }
 
@@ -263,6 +265,37 @@ impl AdvisorPrefs {
             model,
             status: None,
         }
+    }
+}
+
+// ── persisted configuration ───────────────────────────────────────────────────
+
+/// The slice of state that survives across launches, written to disk as JSON.
+/// Run state, focus, and transient status are deliberately excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedConfig {
+    pub settings: Settings,
+    pub advisor: AdvisorPrefs,
+    pub catalog_source: CatalogSource,
+}
+
+impl Msg {
+    /// Whether applying this message changes persisted configuration (so the UI
+    /// should write it to disk). Navigation, selection, and run actions don't.
+    pub fn persists(&self) -> bool {
+        matches!(
+            self,
+            Msg::SetTheme(_)
+                | Msg::SetAccent(_)
+                | Msg::SetDensity(_)
+                | Msg::SetFont(_)
+                | Msg::ToggleReduceMotion
+                | Msg::ToggleScrub
+                | Msg::ToggleTelemetry
+                | Msg::ToggleAutoCleanup
+                | Msg::SetAdvisorModel(_)
+                | Msg::SetCatalogSource(_)
+        )
     }
 }
 
@@ -304,7 +337,24 @@ impl Root {
         Theme::resolve(self.settings.mode(), self.settings.accent())
     }
 
-    /// Build a click handler that applies `msg` and requests a re-render.
+    /// Snapshot the persisted slice of state.
+    pub fn to_config(&self) -> PersistedConfig {
+        PersistedConfig {
+            settings: self.settings,
+            advisor: self.advisor.clone(),
+            catalog_source: self.catalog_source,
+        }
+    }
+
+    /// Apply a loaded config over the defaults (called once at startup).
+    pub fn apply_config(&mut self, cfg: PersistedConfig) {
+        self.settings = cfg.settings;
+        self.advisor = cfg.advisor;
+        self.catalog_source = cfg.catalog_source;
+    }
+
+    /// Build a click handler that applies `msg`, persists config if the message
+    /// changes it, and requests a re-render.
     pub fn on(
         &self,
         cx: &mut Context<Self>,
@@ -312,6 +362,9 @@ impl Root {
     ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
         cx.listener(move |this, _e: &ClickEvent, _w, cx| {
             this.apply(msg);
+            if msg.persists() {
+                crate::backend::save_config(&this.to_config());
+            }
             cx.notify();
         })
     }
@@ -492,5 +545,31 @@ mod tests {
     fn idle_status_summary() {
         let r = Root::headless();
         assert_eq!(r.status_summary(), "no run yet — launch one");
+    }
+
+    #[test]
+    fn config_snapshot_and_apply_round_trip() {
+        let mut r = Root::headless();
+        r.settings.accent_idx = 3;
+        r.advisor.model = "qwq".into();
+        r.catalog_source = CatalogSource::ArtificialAnalysis;
+        let cfg = r.to_config();
+
+        let mut other = Root::headless();
+        other.apply_config(cfg.clone());
+        assert_eq!(other.settings.accent_idx, 3);
+        assert_eq!(other.advisor.model, "qwq");
+        assert_eq!(other.catalog_source, CatalogSource::ArtificialAnalysis);
+        assert_eq!(other.to_config(), cfg);
+    }
+
+    #[test]
+    fn only_config_messages_persist() {
+        assert!(Msg::SetTheme(ThemeChoice::Light).persists());
+        assert!(Msg::ToggleTelemetry.persists());
+        assert!(Msg::SetCatalogSource(CatalogSource::Keyless).persists());
+        assert!(!Msg::Navigate(Screen::Mission).persists());
+        assert!(!Msg::SelectAgent(0).persists());
+        assert!(!Msg::Promote(0).persists());
     }
 }

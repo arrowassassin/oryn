@@ -31,7 +31,47 @@ use oryn_core::orchestrator::task::{Subtask, SubtaskId, SubtaskKind};
 use std::collections::BTreeMap;
 
 use crate::launcher::Adapter;
-use crate::state::CatalogSource;
+use crate::state::{CatalogSource, PersistedConfig};
+
+// ── persisted UI config ───────────────────────────────────────────────────────
+
+/// Where UI preferences are stored: `ORYN_SETTINGS_PATH`, else `~/.oryn/settings.json`.
+pub fn config_path() -> PathBuf {
+    std::env::var("ORYN_SETTINGS_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            PathBuf::from(home).join(".oryn").join("settings.json")
+        })
+}
+
+/// Load persisted UI config, or `None` if absent/unreadable/corrupt (the app then
+/// falls back to environment-derived defaults — never an error).
+pub fn load_config() -> Option<PersistedConfig> {
+    load_config_from(&config_path())
+}
+
+/// Persist UI config. Best-effort: I/O failures are swallowed so a read-only home
+/// directory never breaks the UI.
+pub fn save_config(cfg: &PersistedConfig) {
+    save_config_to(&config_path(), cfg);
+}
+
+/// Load config from an explicit path (testable without touching the environment).
+pub fn load_config_from(path: &std::path::Path) -> Option<PersistedConfig> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Write config as pretty JSON to an explicit path, creating parent dirs.
+pub fn save_config_to(path: &std::path::Path, cfg: &PersistedConfig) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(cfg) {
+        let _ = std::fs::write(path, json);
+    }
+}
 
 /// Capability score assigned to a discovered model we have no benchmark data for
 /// yet — enough to keep it routable until real benchmarks arrive.
@@ -774,6 +814,25 @@ mod tests {
         // Repo detection produced a real label + base ref.
         assert!(!report.repo_label.is_empty());
         assert!(report.advisor.contains("qwen2.5-coder:7b"));
+    }
+
+    #[test]
+    fn config_round_trips_through_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("settings.json");
+        let mut r = crate::Root::headless();
+        r.settings.accent_idx = 2;
+        r.settings.telemetry = true;
+        r.advisor.model = "deepseek-r1:7b".into();
+        r.catalog_source = CatalogSource::ArtificialAnalysis;
+        let cfg = r.to_config();
+
+        assert!(load_config_from(&path).is_none(), "absent file → None");
+        save_config_to(&path, &cfg);
+        let loaded = load_config_from(&path).expect("config reloads");
+        assert_eq!(loaded, cfg);
+        // The transient advisor status is never persisted.
+        assert!(loaded.advisor.status.is_none());
     }
 
     #[test]
