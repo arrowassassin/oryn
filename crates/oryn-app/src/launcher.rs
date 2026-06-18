@@ -1,43 +1,36 @@
-//! Launcher view — "Launch a race".
+//! Launcher view — "Launch a race", fully interactive.
 //!
-//! Where a mission is configured before it runs: the repository + base, the task
-//! prompt, the set of agent frameworks to race (each becomes an isolated
-//! worktree), the per-agent hard stops, and a live cost estimate. Mirrors the
-//! Launcher screen in the design handoff (`Oryn.dc.html`).
-//!
-//! The adapter list is the UI face of the orchestrator's `(framework, model)`
-//! discovery: each [`Adapter`] is a framework the user has credentials for, tagged
-//! with the model it would race and whether it is selected.
+//! Pure data ([`Adapter`], [`Estimate`]) plus render methods on [`crate::Root`].
+//! Adapter rows toggle selection, the estimate recomputes live from the current
+//! selection, and "Launch race" starts a fresh simulation with exactly the
+//! selected frameworks. The adapter list is the UI face of the orchestrator's
+//! `(framework, model)` discovery.
 
-use gpui::prelude::FluentBuilder;
-use gpui::{AnyElement, FontWeight, IntoElement, ParentElement, Styled, div, px, relative};
+use gpui::prelude::*;
+use gpui::{AnyElement, Context, FontWeight, ParentElement, Styled, div, px, relative};
 
+use crate::Root;
 use crate::colors::{overlay, solid, tint};
 use crate::mission::COST_CAP;
+use crate::state::Msg;
 use crate::theme::{Rgb, Theme};
 
-/// Fraction of the max spend expected to actually be paid once the cache-stable
-/// prefix is reused across agents (the design shows ~$7.20 of a $16.00 ceiling).
+/// Fraction of the worst-case spend expected once the cache-stable prefix is
+/// reused across agents (the design shows ~$7.20 of a $16.00 ceiling).
 const CACHE_SPEND_FACTOR: f64 = 0.45;
 
-/// One agent framework the user can race, with the model it would use.
+/// One agent framework the user can race.
 #[derive(Debug, Clone)]
 pub struct Adapter {
-    /// Display name, e.g. `"Claude Code"`.
     pub name: &'static str,
-    /// CLI identifier, e.g. `"claude"`.
     pub cli: &'static str,
-    /// Brand hue (0xRRGGBB).
     pub color: Rgb,
-    /// Whether this framework is selected for the race.
     pub enabled: bool,
-    /// Model or availability tag, e.g. `"opus-4.6"`, `"available"`, `"planned"`.
     pub tag: &'static str,
 }
 
 impl Adapter {
-    /// The frameworks shown in the design handoff: four credentialed + selected,
-    /// two discovered-but-off.
+    /// Frameworks from the design: four credentialed + selected, two off.
     pub fn available() -> Vec<Adapter> {
         vec![
             Adapter { name: "Claude Code", cli: "claude", color: 0xC08CFF, enabled: true, tag: "opus-4.6" },
@@ -48,16 +41,17 @@ impl Adapter {
             Adapter { name: "Cursor Agent", cli: "cursor", color: 0x4A4A53, enabled: false, tag: "planned" },
         ]
     }
+
+    fn selectable(&self) -> bool {
+        self.tag != "planned"
+    }
 }
 
 /// Cost estimate derived from the selected adapters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Estimate {
-    /// Number of agents selected.
     pub agents: usize,
-    /// Worst-case spend if every agent hits its USD cap.
     pub max_spend: f64,
-    /// Expected spend once the cache-stable prefix is reused.
     pub with_cache: f64,
 }
 
@@ -72,132 +66,125 @@ fn fmt_usd(n: f64) -> String {
     format!("${n:.2}")
 }
 
-// ── view ────────────────────────────────────────────────────────────────────
+// ── view (methods on Root) ────────────────────────────────────────────────────
 
-/// Render the full Launcher view.
-pub fn launcher(t: &Theme, adapters: &[Adapter]) -> impl IntoElement {
-    div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .min_h(px(0.0))
-        .child(super::view_header(t, "NEW RUN", "Launch a race"))
-        .child(
-            div()
-                .flex_1()
-                .overflow_hidden()
-                .flex()
-                .justify_center()
-                .gap(px(22.0))
-                .px(px(24.0))
-                .pt(px(22.0))
-                .pb(px(40.0))
-                .child(form_column(t, adapters))
-                .child(estimate_card(t, adapters)),
-        )
-}
+impl Root {
+    /// Render the full Launcher view.
+    pub(crate) fn launcher_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme();
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .min_h(px(0.0))
+            .child(crate::view_header(&t, "NEW RUN", "Launch a race"))
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .flex()
+                    .justify_center()
+                    .gap(px(22.0))
+                    .px(px(24.0))
+                    .pt(px(22.0))
+                    .pb(px(40.0))
+                    .child(self.launch_form(cx, &t))
+                    .child(self.estimate_card(cx, &t)),
+            )
+            .into_any_element()
+    }
 
-fn form_column(t: &Theme, adapters: &[Adapter]) -> impl IntoElement {
-    div()
-        .flex_1()
-        .max_w(px(620.0))
-        .flex()
-        .flex_col()
-        .gap(px(20.0))
-        .child(section(
-            t,
-            "REPOSITORY",
-            div()
-                .flex()
-                .items_center()
-                .gap(px(10.0))
-                .h(px(40.0))
-                .px(px(13.0))
-                .bg(solid(t.surfaces.panel))
-                .border_1()
-                .border_color(overlay(t.overlays.w09))
-                .rounded(px(9.0))
-                .child(div().text_size(px(12.5)).text_color(solid(t.text.t1)).child("acme/web-platform"))
-                .child(div().flex_1())
-                .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child("main@4f2ab1c")),
-        ))
-        .child(section(
-            t,
-            "TASK",
-            div()
-                .min_h(px(96.0))
-                .px(px(14.0))
-                .py(px(13.0))
-                .bg(solid(t.surfaces.panel))
-                .border_1()
-                .border_color(overlay(t.overlays.w09))
-                .rounded(px(9.0))
-                .text_size(px(12.5))
-                .text_color(solid(t.text.t2))
-                .child(
-                    "The token refresh fires twice under concurrent 401s, causing a refresh \
-                     race. Add a single-flight guard so concurrent refreshes coalesce, and make \
-                     auth/refresh.test.ts pass.",
-                ),
-        ))
-        .child(agents_section(t, adapters))
-        .child(section(t, "PER-AGENT HARD STOP", caps_row(t)))
-        .child(scrub_toggle(t))
-}
+    fn launch_form(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
+        div()
+            .flex_1()
+            .max_w(px(620.0))
+            .flex()
+            .flex_col()
+            .gap(px(20.0))
+            .child(section(
+                t,
+                "REPOSITORY",
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .h(px(40.0))
+                    .px(px(13.0))
+                    .bg(solid(t.surfaces.panel))
+                    .border_1()
+                    .border_color(overlay(t.overlays.w09))
+                    .rounded(px(9.0))
+                    .child(div().text_size(px(12.5)).text_color(solid(t.text.t1)).child("acme/web-platform"))
+                    .child(div().flex_1())
+                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child("main@4f2ab1c")),
+            ))
+            .child(section(
+                t,
+                "TASK",
+                div()
+                    .min_h(px(96.0))
+                    .px(px(14.0))
+                    .py(px(13.0))
+                    .bg(solid(t.surfaces.panel))
+                    .border_1()
+                    .border_color(overlay(t.overlays.w09))
+                    .rounded(px(9.0))
+                    .text_size(px(12.5))
+                    .text_color(solid(t.text.t2))
+                    .child("The token refresh fires twice under concurrent 401s, causing a refresh race. Add a single-flight guard so concurrent refreshes coalesce, and make auth/refresh.test.ts pass."),
+            ))
+            .child(self.agents_section(cx, t))
+            .child(section(t, "PER-AGENT HARD STOP", caps_row(t)))
+            .child(scrub_toggle(self, cx, t))
+    }
 
-fn agents_section(t: &Theme, adapters: &[Adapter]) -> impl IntoElement {
-    let selected = adapters.iter().filter(|a| a.enabled).count();
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(9.0))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(section_label(t, "AGENTS TO RACE"))
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(solid(t.text.t5))
-                        .child(format!("{selected} selected · each gets an isolated worktree")),
-                ),
-        )
-        .child(
-            // 2-column grid emulated with rows of two.
-            div().flex().flex_col().gap(px(9.0)).children(
-                adapters
-                    .chunks(2)
-                    .map(|pair| {
-                        div()
-                            .flex()
-                            .gap(px(9.0))
-                            .children(pair.iter().map(|a| adapter_row(t, a)))
-                    }),
-            ),
-        )
-}
+    fn agents_section(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
+        let selected = self.adapters.iter().filter(|a| a.enabled).count();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (row, pair) in self.adapters.chunks(2).enumerate() {
+            let mut cells: Vec<AnyElement> = Vec::new();
+            for (col, a) in pair.iter().enumerate() {
+                cells.push(self.adapter_row(cx, t, row * 2 + col, a));
+            }
+            rows.push(div().flex().gap(px(9.0)).children(cells).into_any_element());
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(9.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(section_label(t, "AGENTS TO RACE"))
+                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(format!("{selected} selected · each gets an isolated worktree"))),
+            )
+            .child(div().flex().flex_col().gap(px(9.0)).children(rows))
+    }
 
-fn adapter_row(t: &Theme, a: &Adapter) -> impl IntoElement {
-    let (bg, border) = if a.enabled {
-        (tint(t.accent.base, 0.07), tint(t.accent.base, 0.3))
-    } else {
-        (solid(t.surfaces.panel), overlay(t.overlays.w07))
-    };
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .gap(px(9.0))
-        .px(px(12.0))
-        .py(px(11.0))
-        .rounded(px(9.0))
-        .bg(bg)
-        .border_1()
-        .border_color(border)
-        // checkbox
-        .child(
+    fn adapter_row(&self, cx: &mut Context<Self>, t: &Theme, idx: usize, a: &Adapter) -> AnyElement {
+        let (bg, border) = if a.enabled {
+            (tint(t.accent.base, 0.07), tint(t.accent.base, 0.3))
+        } else {
+            (solid(t.surfaces.panel), overlay(t.overlays.w07))
+        };
+        let mut row = div()
+            .id(("adapter", idx))
+            .flex_1()
+            .flex()
+            .items_center()
+            .gap(px(9.0))
+            .px(px(12.0))
+            .py(px(11.0))
+            .rounded(px(9.0))
+            .bg(bg)
+            .border_1()
+            .border_color(border);
+        if a.selectable() {
+            row = row.cursor_pointer().on_click(self.on(cx, Msg::ToggleAdapter(idx)));
+        }
+        row.child(
             div()
                 .flex()
                 .items_center()
@@ -207,11 +194,7 @@ fn adapter_row(t: &Theme, a: &Adapter) -> impl IntoElement {
                 .border_1()
                 .map(|d| {
                     if a.enabled {
-                        d.bg(solid(t.accent.base))
-                            .border_color(solid(t.accent.base))
-                            .text_size(px(11.0))
-                            .text_color(solid(0x1A0F2E))
-                            .child("✓")
+                        d.bg(solid(t.accent.base)).border_color(solid(t.accent.base)).text_size(px(11.0)).text_color(solid(0x1A0F2E)).child("✓")
                     } else {
                         d.border_color(overlay(t.overlays.w18))
                     }
@@ -223,13 +206,7 @@ fn adapter_row(t: &Theme, a: &Adapter) -> impl IntoElement {
                 .flex()
                 .flex_col()
                 .min_w(px(0.0))
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(solid(t.text.t1))
-                        .child(a.name),
-                )
+                .child(div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child(a.name))
                 .child(div().text_size(px(10.0)).text_color(solid(t.text.t5)).child(a.cli)),
         )
         .child(div().flex_1())
@@ -244,6 +221,68 @@ fn adapter_row(t: &Theme, a: &Adapter) -> impl IntoElement {
                 .text_size(px(9.5))
                 .text_color(solid(t.text.t5))
                 .child(a.tag),
+        )
+        .into_any_element()
+    }
+
+    fn estimate_card(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
+        let est = estimate(&self.adapters);
+        div()
+            .w(px(280.0))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .bg(solid(t.surfaces.panel))
+            .border_1()
+            .border_color(overlay(t.overlays.w09))
+            .rounded(px(13.0))
+            .p(px(18.0))
+            .child(div().mb(px(16.0)).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child("ESTIMATE"))
+            .child(estimate_row(t, "Agents", est.agents.to_string(), t.text.t1, true))
+            .child(estimate_row(t, "Max spend", fmt_usd(est.max_spend), t.text.t1, true))
+            .child(estimate_row(t, "Est. with cache", fmt_usd(est.with_cache), t.status.green, true))
+            .child(estimate_row(t, "Wall clock cap", "15 min".to_string(), t.text.t1, false))
+            .child(
+                div()
+                    .id("launch")
+                    .mt(px(16.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .h(px(40.0))
+                    .rounded(px(9.0))
+                    .bg(solid(t.accent.base))
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(solid(0x1A0F2E))
+                    .cursor_pointer()
+                    .on_click(self.on(cx, Msg::StartRace))
+                    .child("▸ Launch race"),
+            )
+            .child(div().mt(px(9.0)).flex().justify_center().text_size(px(10.5)).text_color(solid(t.text.t6)).child("⌘↵ to launch"))
+    }
+}
+
+// ── static / shared sub-parts ──────────────────────────────────────────────────
+
+fn scrub_toggle(root: &Root, cx: &mut Context<Root>, t: &Theme) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(11.0))
+        .px(px(14.0))
+        .py(px(12.0))
+        .bg(solid(t.surfaces.panel))
+        .border_1()
+        .border_color(overlay(t.overlays.w09))
+        .rounded(px(9.0))
+        .child(crate::settings::toggle_switch(root, cx, t, "scrub", root.settings.scrub, Msg::ToggleScrub))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child("Scrub secrets before persist"))
+                .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child("redact tokens & keys from raw payloads")),
         )
 }
 
@@ -285,105 +324,6 @@ fn cap_card(t: &Theme, label: &'static str, value: &'static str, fraction: f32, 
         .child(div().mt(px(8.0)).text_size(px(10.0)).text_color(solid(t.text.t6)).child(note))
 }
 
-fn scrub_toggle(t: &Theme) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(11.0))
-        .px(px(14.0))
-        .py(px(12.0))
-        .bg(solid(t.surfaces.panel))
-        .border_1()
-        .border_color(overlay(t.overlays.w09))
-        .rounded(px(9.0))
-        // toggle (on)
-        .child(
-            div()
-                .relative()
-                .w(px(34.0))
-                .h(px(20.0))
-                .rounded(px(11.0))
-                .bg(solid(t.accent.base))
-                .flex_none()
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(2.0))
-                        .right(px(2.0))
-                        .size(px(16.0))
-                        .rounded_full()
-                        .bg(solid(0xFFFFFF)),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(solid(t.text.t1))
-                        .child("Scrub secrets before persist"),
-                )
-                .child(
-                    div()
-                        .text_size(px(10.5))
-                        .text_color(solid(t.text.t5))
-                        .child("redact tokens & keys from raw payloads"),
-                ),
-        )
-}
-
-fn estimate_card(t: &Theme, adapters: &[Adapter]) -> impl IntoElement {
-    let est = estimate(adapters);
-    div()
-        .w(px(280.0))
-        .flex_none()
-        .flex()
-        .flex_col()
-        .bg(solid(t.surfaces.panel))
-        .border_1()
-        .border_color(overlay(t.overlays.w09))
-        .rounded(px(13.0))
-        .p(px(18.0))
-        .child(
-            div()
-                .mb(px(16.0))
-                .text_size(px(10.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(solid(t.text.t3))
-                .child("ESTIMATE"),
-        )
-        .child(estimate_row(t, "Agents", est.agents.to_string(), t.text.t1, true))
-        .child(estimate_row(t, "Max spend", fmt_usd(est.max_spend), t.text.t1, true))
-        .child(estimate_row(t, "Est. with cache", fmt_usd(est.with_cache), t.status.green, true))
-        .child(estimate_row(t, "Wall clock cap", "15 min".to_string(), t.text.t1, false))
-        .child(
-            div()
-                .mt(px(16.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .h(px(40.0))
-                .rounded(px(9.0))
-                .bg(solid(t.accent.base))
-                .text_size(px(13.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(solid(0x1A0F2E))
-                .child("▸ Launch race"),
-        )
-        .child(
-            div()
-                .mt(px(9.0))
-                .flex()
-                .justify_center()
-                .text_size(px(10.5))
-                .text_color(solid(t.text.t6))
-                .child("⌘↵ to launch"),
-        )
-}
-
 fn estimate_row(t: &Theme, label: &'static str, value: String, value_color: Rgb, border: bool) -> impl IntoElement {
     div()
         .flex()
@@ -394,28 +334,12 @@ fn estimate_row(t: &Theme, label: &'static str, value: String, value_color: Rgb,
         .child(div().text_size(px(12.5)).text_color(solid(value_color)).child(value))
 }
 
-// ── shared section helpers ────────────────────────────────────────────────────
-
-fn section_label(t: &Theme, label: &'static str) -> impl IntoElement {
-    div()
-        .text_size(px(10.0))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(solid(t.text.t3))
-        .child(label)
+pub(crate) fn section_label(t: &Theme, label: &'static str) -> impl IntoElement {
+    div().text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child(label)
 }
 
-fn section(t: &Theme, label: &'static str, body: impl IntoElement) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(9.0))
-        .child(section_label(t, label))
-        .child(body)
-}
-
-/// Type-erased entry point for screen dispatch.
-pub fn launcher_any(t: &Theme, adapters: &[Adapter]) -> AnyElement {
-    launcher(t, adapters).into_any_element()
+pub(crate) fn section(t: &Theme, label: &'static str, body: impl IntoElement) -> impl IntoElement {
+    div().flex().flex_col().gap(px(9.0)).child(section_label(t, label)).child(body)
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -441,16 +365,21 @@ mod tests {
 
     #[test]
     fn estimate_scales_with_selection() {
-        let none: Vec<Adapter> = vec![];
-        let e = estimate(&none);
+        let e = estimate(&[]);
         assert_eq!(e.agents, 0);
         assert_eq!(e.max_spend, 0.0);
         assert_eq!(e.with_cache, 0.0);
     }
 
     #[test]
-    fn cache_estimate_is_below_max_spend() {
+    fn cache_estimate_below_max_spend() {
         let est = estimate(&Adapter::available());
-        assert!(est.with_cache < est.max_spend, "cache reuse must reduce spend");
+        assert!(est.with_cache < est.max_spend);
+    }
+
+    #[test]
+    fn planned_is_not_selectable() {
+        let cursor = Adapter { name: "Cursor Agent", cli: "cursor", color: 0, enabled: false, tag: "planned" };
+        assert!(!cursor.selectable());
     }
 }
