@@ -1,0 +1,5 @@
+/target
+/.oryn
+/.claude/worktrees
+*.profraw
+/lcov.info
