@@ -255,14 +255,17 @@ mod tests {
 
     #[test]
     fn framework_ordering_respected_in_sort() {
-        // AgentFramework ord: Aider < ClaudeCode < Codex < Cursor < GeminiCli < Local
-        let src_cursor =
-            FakeDiscovery::ok(AgentFramework::Cursor, vec![make_spec(AgentFramework::Cursor, "m")]);
+        // AgentFramework is declared in priority order, so its derived Ord is:
+        // ClaudeCode < Codex < Cursor < Aider < GeminiCli < Local. Sorting by
+        // ExecutionTarget therefore orders Cursor before Aider regardless of the
+        // order the sources were supplied in.
         let src_aider =
             FakeDiscovery::ok(AgentFramework::Aider, vec![make_spec(AgentFramework::Aider, "m")]);
-        let (specs, _) = discover_targets(&[&src_cursor, &src_aider]);
-        assert_eq!(specs[0].framework, AgentFramework::Aider);
-        assert_eq!(specs[1].framework, AgentFramework::Cursor);
+        let src_cursor =
+            FakeDiscovery::ok(AgentFramework::Cursor, vec![make_spec(AgentFramework::Cursor, "m")]);
+        let (specs, _) = discover_targets(&[&src_aider, &src_cursor]);
+        assert_eq!(specs[0].framework, AgentFramework::Cursor);
+        assert_eq!(specs[1].framework, AgentFramework::Aider);
     }
 
     // ── AgentFramework Display + serde ────────────────────────────────────────
