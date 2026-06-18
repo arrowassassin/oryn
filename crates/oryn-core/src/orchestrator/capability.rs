@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 
 use crate::orchestrator::{
-    provider::{ModelId, ModelKind, ModelSpec, Pricing},
+    provider::{ExecutionTarget, ModelId, ModelKind, ModelSpec, Pricing},
     task::SubtaskKind,
 };
 
@@ -207,17 +207,18 @@ pub fn cost_metric(p: &Pricing) -> f64 {
 
 // ── CapabilityMatrix ──────────────────────────────────────────────────────────
 
-/// Maps each [`SubtaskKind`] to an ordered tier of [`ModelId`]s.
+/// Maps each [`SubtaskKind`] to an ordered tier of [`ExecutionTarget`]s.
 ///
-/// The tier is ordered cheapest-capable-first. Callers should try candidates
-/// in order and fall through to the next on failure.
+/// Each tier entry is a `(framework, model)` target — routing chooses *both*
+/// the agent framework and the model. The tier is ordered cheapest-capable-first;
+/// callers try candidates in order and fall through to the next on failure.
 ///
 /// [`BTreeMap`] is used so that iteration over kinds is always deterministic
 /// regardless of insertion order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityMatrix {
-    /// Maps each sub-task kind to its ordered model tier.
-    pub tiers: BTreeMap<SubtaskKind, Vec<ModelId>>,
+    /// Maps each sub-task kind to its ordered execution-target tier.
+    pub tiers: BTreeMap<SubtaskKind, Vec<ExecutionTarget>>,
 }
 
 impl CapabilityMatrix {
@@ -226,10 +227,10 @@ impl CapabilityMatrix {
         Self { tiers: BTreeMap::new() }
     }
 
-    /// Return the ordered model tier for `kind`.
+    /// Return the ordered execution-target tier for `kind`.
     ///
     /// Returns an empty slice if the kind has no mapping in this matrix.
-    pub fn tier(&self, kind: SubtaskKind) -> &[ModelId] {
+    pub fn tier(&self, kind: SubtaskKind) -> &[ExecutionTarget] {
         self.tiers.get(&kind).map(Vec::as_slice).unwrap_or(&[])
     }
 
@@ -238,8 +239,8 @@ impl CapabilityMatrix {
     /// Consumes `self` and returns a new [`CapabilityMatrix`] so that calls
     /// can be chained fluently.
     #[must_use]
-    pub fn with(mut self, kind: SubtaskKind, models: Vec<ModelId>) -> Self {
-        self.tiers.insert(kind, models);
+    pub fn with(mut self, kind: SubtaskKind, targets: Vec<ExecutionTarget>) -> Self {
+        self.tiers.insert(kind, targets);
         self
     }
 }
@@ -307,13 +308,14 @@ pub fn resolve_matrix(
             if ord != std::cmp::Ordering::Equal {
                 return ord;
             }
-            // 4. ModelId ascending (lexicographic tie-break)
-            a_spec.id.as_str().cmp(b_spec.id.as_str())
+            // 4. ExecutionTarget ascending (framework then model — total tie-break)
+            a_spec.target().cmp(&b_spec.target())
         });
 
         if !candidates.is_empty() {
-            let ids: Vec<ModelId> = candidates.iter().map(|(s, _)| s.id.clone()).collect();
-            matrix = matrix.with(kind, ids);
+            let targets: Vec<ExecutionTarget> =
+                candidates.iter().map(|(s, _)| s.target()).collect();
+            matrix = matrix.with(kind, targets);
         }
     }
 
@@ -355,6 +357,15 @@ mod tests {
 
     fn profile_for(kind: SubtaskKind, score: f64) -> CapabilityProfile {
         CapabilityProfile::new().with(kind, score)
+    }
+
+    // Expected execution targets: `lt` matches `local_spec` (Local framework),
+    // `at` matches `api_spec` (ClaudeCode framework).
+    fn lt(id: &str) -> ExecutionTarget {
+        ExecutionTarget { framework: AgentFramework::Local, model: ModelId::new(id) }
+    }
+    fn at(id: &str) -> ExecutionTarget {
+        ExecutionTarget { framework: AgentFramework::ClaudeCode, model: ModelId::new(id) }
     }
 
     // ── SubtaskKind::ALL has exactly 6 unique variants ────────────────────────
@@ -438,7 +449,7 @@ mod tests {
 
         let matrix = resolve_matrix(&available, &profiles);
         let tier = matrix.tier(kind);
-        assert_eq!(tier, &[mid("api-strong")]);
+        assert_eq!(tier, &[at("api-strong")]);
     }
 
     #[test]
@@ -457,8 +468,8 @@ mod tests {
         let matrix = resolve_matrix(&available, &profiles);
         let tier = matrix.tier(kind);
         assert_eq!(tier.len(), 2);
-        assert_eq!(tier[0], mid("local-ok"), "local/zero-cost must precede priced API");
-        assert_eq!(tier[1], mid("api-ok"));
+        assert_eq!(tier[0], lt("local-ok"), "local/zero-cost must precede priced API");
+        assert_eq!(tier[1], at("api-ok"));
     }
 
     #[test]
@@ -483,8 +494,8 @@ mod tests {
 
         let matrix = resolve_matrix(&available, &profiles);
         let tier = matrix.tier(kind);
-        assert_eq!(tier, &[mid("present")]);
-        assert!(!tier.contains(&mid("ghost")));
+        assert_eq!(tier, &[at("present")]);
+        assert!(!tier.contains(&at("ghost")));
     }
 
     #[test]
@@ -501,7 +512,7 @@ mod tests {
 
         let matrix = resolve_matrix(&available, &profiles);
         let tier = matrix.tier(kind);
-        assert_eq!(tier, &[mid("has-profile")]);
+        assert_eq!(tier, &[at("has-profile")]);
     }
 
     // ── resolve_matrix: determinism ───────────────────────────────────────────
@@ -543,7 +554,7 @@ mod tests {
         let matrix = resolve_matrix(&available, &profiles);
         let tier = matrix.tier(kind);
         assert_eq!(tier.len(), 2);
-        assert_eq!(tier[0], mid("api-high"), "higher score must sort first when cost is equal");
+        assert_eq!(tier[0], at("api-high"), "higher score must sort first when cost is equal");
     }
 
     // ── resolve_matrix: sort key — same cost+score, local before API ─────────
@@ -563,7 +574,7 @@ mod tests {
         let matrix = resolve_matrix(&available, &profiles);
         let tier = matrix.tier(kind);
         assert_eq!(tier.len(), 2);
-        assert_eq!(tier[0], mid("zero-local"), "local must precede API when cost and score tie");
+        assert_eq!(tier[0], lt("zero-local"), "local must precede API when cost and score tie");
     }
 
     // ── resolve_matrix: sort key — ModelId lexicographic tie-break ───────────
@@ -581,8 +592,8 @@ mod tests {
 
         let matrix = resolve_matrix(&available, &profiles);
         let tier = matrix.tier(kind);
-        assert_eq!(tier[0], mid("aaa"), "lexicographically smaller id must come first");
-        assert_eq!(tier[1], mid("zzz"));
+        assert_eq!(tier[0], at("aaa"), "lexicographically smaller id must come first");
+        assert_eq!(tier[1], at("zzz"));
     }
 
     // ── default_profiles: covers all known logical ids ────────────────────────
@@ -652,20 +663,20 @@ mod tests {
 
         // Debugging: gpt-5-high (0.95) > opus (0.92) — both API, same cost
         let debug_tier = matrix.tier(SubtaskKind::Debugging);
-        let pos = |id: &str| debug_tier.iter().position(|m| m.as_str() == id).unwrap();
+        let pos = |id: &str| debug_tier.iter().position(|t| t.model.as_str() == id).unwrap();
         assert!(pos("gpt-5-high") < pos("opus"), "gpt-5-high must precede opus in Debugging tier");
 
         // LargeContext: gemini-2.5-pro has score 0.90 among API (highest)
         let lc_tier = matrix.tier(SubtaskKind::LargeContext);
         // local models sort first; among API, gemini-2.5-pro must be first API entry
-        let first_api = lc_tier.iter().position(|m| {
+        let first_api = lc_tier.iter().position(|t| {
             available
                 .iter()
-                .find(|s| s.id == *m)
+                .find(|s| s.id == t.model)
                 .map(|s| matches!(s.kind, ModelKind::Api { .. }))
                 .unwrap_or(false)
         });
-        let gemini_pos = lc_tier.iter().position(|m| m.as_str() == "gemini-2.5-pro").unwrap();
+        let gemini_pos = lc_tier.iter().position(|t| t.model.as_str() == "gemini-2.5-pro").unwrap();
         assert_eq!(
             first_api,
             Some(gemini_pos),
@@ -684,24 +695,24 @@ mod tests {
     #[test]
     fn matrix_with_overrides_existing_tier() {
         let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::Refactor, vec![mid("original")])
-            .with(SubtaskKind::Refactor, vec![mid("override-a"), mid("override-b")]);
-        assert_eq!(matrix.tier(SubtaskKind::Refactor), &[mid("override-a"), mid("override-b")]);
+            .with(SubtaskKind::Refactor, vec![at("original")])
+            .with(SubtaskKind::Refactor, vec![at("override-a"), at("override-b")]);
+        assert_eq!(matrix.tier(SubtaskKind::Refactor), &[at("override-a"), at("override-b")]);
     }
 
     #[test]
     fn matrix_independent_kinds_both_present() {
         let matrix = CapabilityMatrix::new()
-            .with(SubtaskKind::MechanicalEdit, vec![mid("cheap")])
-            .with(SubtaskKind::Debugging, vec![mid("strong")]);
-        assert_eq!(matrix.tier(SubtaskKind::MechanicalEdit), &[mid("cheap")]);
-        assert_eq!(matrix.tier(SubtaskKind::Debugging), &[mid("strong")]);
+            .with(SubtaskKind::MechanicalEdit, vec![at("cheap")])
+            .with(SubtaskKind::Debugging, vec![at("strong")]);
+        assert_eq!(matrix.tier(SubtaskKind::MechanicalEdit), &[at("cheap")]);
+        assert_eq!(matrix.tier(SubtaskKind::Debugging), &[at("strong")]);
         assert!(matrix.tier(SubtaskKind::DiffEdit).is_empty());
     }
 
     #[test]
     fn matrix_clone_produces_equal() {
-        let m = CapabilityMatrix::new().with(SubtaskKind::TestGen, vec![mid("a"), mid("b")]);
+        let m = CapabilityMatrix::new().with(SubtaskKind::TestGen, vec![at("a"), at("b")]);
         assert_eq!(m.clone(), m);
     }
 
@@ -716,8 +727,8 @@ mod tests {
     #[test]
     fn matrix_btreemap_iteration_is_deterministic() {
         let m = CapabilityMatrix::new()
-            .with(SubtaskKind::Refactor, vec![mid("x")])
-            .with(SubtaskKind::TestGen, vec![mid("y")]);
+            .with(SubtaskKind::Refactor, vec![at("x")])
+            .with(SubtaskKind::TestGen, vec![at("y")]);
         let pass1: Vec<SubtaskKind> = m.tiers.keys().copied().collect();
         let pass2: Vec<SubtaskKind> = m.tiers.keys().copied().collect();
         assert_eq!(pass1, pass2);
