@@ -17,7 +17,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::orchestrator::provider::CompletionResponse;
+use crate::orchestrator::provider::{CompletionResponse, ExecutionTarget};
 use crate::orchestrator::scheduler::{Verdict, Verifier};
 use crate::orchestrator::task::{Subtask, SubtaskKind};
 
@@ -207,7 +207,12 @@ impl<A: LocalAdvisor> AdvisorVerifier<A> {
 }
 
 impl<A: LocalAdvisor> Verifier for AdvisorVerifier<A> {
-    fn verify(&self, subtask: &Subtask, response: &CompletionResponse) -> Verdict {
+    fn verify(
+        &self,
+        _target: &ExecutionTarget,
+        subtask: &Subtask,
+        response: &CompletionResponse,
+    ) -> Verdict {
         self.advisor
             .verify(subtask, &response.text)
             .unwrap_or(self.fallback)
@@ -230,6 +235,11 @@ mod tests {
             summary: "fix the refresh race".into(),
             deps: vec![],
         }
+    }
+
+    fn tgt() -> ExecutionTarget {
+        use crate::orchestrator::provider::{AgentFramework, ModelId};
+        ExecutionTarget::new(AgentFramework::Local, ModelId::new("m"))
     }
 
     fn ok_body(content: &str) -> String {
@@ -362,7 +372,7 @@ mod tests {
                 score: 0.0,
             },
         );
-        let out = v.verify(&subtask(), &response("done"));
+        let out = v.verify(&tgt(), &subtask(), &response("done"));
         assert!(out.passed);
         assert!((out.score - 0.9).abs() < 1e-9);
     }
@@ -374,7 +384,7 @@ mod tests {
             score: 0.1,
         };
         let v = AdvisorVerifier::new(StubAdvisor(Err(())), fallback);
-        let out = v.verify(&subtask(), &response("done"));
+        let out = v.verify(&tgt(), &subtask(), &response("done"));
         assert!(!out.passed);
         assert!((out.score - 0.1).abs() < 1e-9);
     }

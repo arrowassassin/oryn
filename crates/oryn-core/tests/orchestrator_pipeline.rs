@@ -18,8 +18,8 @@ use oryn_core::orchestrator::{
     discovery::{DiscoveryError, ModelDiscovery, discover_targets},
     prefix::CacheStablePrefix,
     provider::{
-        AgentFramework, CompletionRequest, CompletionResponse, ModelId, ModelKind, ModelProvider,
-        ModelSpec, Pricing, ProviderError, ProviderRegistry,
+        AgentFramework, CompletionRequest, CompletionResponse, ExecutionTarget, ModelId, ModelKind,
+        ModelProvider, ModelSpec, Pricing, ProviderError, ProviderRegistry,
     },
     scheduler::{Orchestrator, Verdict, Verifier},
     task::{Mission, Subtask, SubtaskId, SubtaskKind},
@@ -67,7 +67,12 @@ struct AcceptVerifier {
 }
 
 impl Verifier for AcceptVerifier {
-    fn verify(&self, _subtask: &Subtask, response: &CompletionResponse) -> Verdict {
+    fn verify(
+        &self,
+        _target: &ExecutionTarget,
+        _subtask: &Subtask,
+        response: &CompletionResponse,
+    ) -> Verdict {
         let passed = self.passing.iter().any(|t| t == &response.text);
         Verdict {
             passed,

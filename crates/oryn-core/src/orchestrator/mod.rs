@@ -30,3 +30,4 @@ pub mod provider;
 pub mod runner;
 pub mod scheduler;
 pub mod task;
+pub mod verify;

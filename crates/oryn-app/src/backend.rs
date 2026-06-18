@@ -340,6 +340,35 @@ pub fn verify_source(source: CatalogSource) -> String {
 
 // ── engine wiring ─────────────────────────────────────────────────────────────
 
+/// Detect the project's test command so the engine can verify by execution.
+/// `ORYN_TEST_CMD` (whitespace-split) always wins; otherwise it's inferred from
+/// the files in `repo_root`. `None` means "no test runner found" — verification
+/// then falls back to the advisor.
+pub fn detect_test_command(repo_root: &std::path::Path) -> Option<Vec<String>> {
+    if let Ok(raw) = std::env::var("ORYN_TEST_CMD") {
+        let parts: Vec<String> = raw.split_whitespace().map(str::to_string).collect();
+        if !parts.is_empty() {
+            return Some(parts);
+        }
+    }
+    let has = |name: &str| repo_root.join(name).exists();
+    if has("Cargo.toml") {
+        Some(vec!["cargo".into(), "test".into(), "--quiet".into()])
+    } else if has("go.mod") {
+        Some(vec!["go".into(), "test".into(), "./...".into()])
+    } else if has("package.json") {
+        Some(vec!["npm".into(), "test".into(), "--silent".into()])
+    } else if has("pyproject.toml")
+        || has("pytest.ini")
+        || has("tox.ini")
+        || repo_root.join("tests").is_dir()
+    {
+        Some(vec!["pytest".into(), "-q".into()])
+    } else {
+        None
+    }
+}
+
 /// The worktree base directory, from `ORYN_WORKTREE_BASE` or a default.
 fn worktree_base() -> PathBuf {
     std::env::var("ORYN_WORKTREE_BASE")
@@ -361,6 +390,7 @@ pub fn build_engine(
         repo_path: repo_root.to_path_buf(),
         worktree_base: worktree_base(),
         default_auth: AuthMode::Subscription,
+        test_command: detect_test_command(repo_root),
     };
     Engine::new(
         config,
@@ -976,6 +1006,24 @@ mod tests {
         assert_eq!(loaded, cfg);
         // The transient advisor status is never persisted.
         assert!(loaded.advisor.status.is_none());
+    }
+
+    #[test]
+    fn detect_test_command_infers_from_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            detect_test_command(dir.path()),
+            None,
+            "empty dir → no runner"
+        );
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        assert_eq!(
+            detect_test_command(dir.path()),
+            Some(vec!["cargo".into(), "test".into(), "--quiet".into()])
+        );
+        let go = tempfile::tempdir().unwrap();
+        std::fs::write(go.path().join("go.mod"), "module x\n").unwrap();
+        assert_eq!(detect_test_command(go.path()).unwrap()[0], "go");
     }
 
     #[test]

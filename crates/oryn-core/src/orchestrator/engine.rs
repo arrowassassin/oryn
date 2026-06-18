@@ -31,6 +31,7 @@ use crate::orchestrator::provider::{ExecutionTarget, ModelSpec, ProviderRegistry
 use crate::orchestrator::runner::{HarnessProvider, ProcessRunner};
 use crate::orchestrator::scheduler::{MissionResult, Orchestrator, OrchestratorError, Verdict};
 use crate::orchestrator::task::Mission;
+use crate::orchestrator::verify::ExecutionVerifier;
 use crate::worktree::{WorktreeDiff, WorktreeManager};
 
 /// Configuration for the local advisor connection — the part the user chooses.
@@ -78,6 +79,10 @@ pub struct EngineConfig {
     pub worktree_base: PathBuf,
     /// Default auth mode for harness CLIs (subscription login by default).
     pub default_auth: AuthMode,
+    /// The project's test command (program + args). When set, a worktree run is
+    /// gated by running it in each target's worktree and checking the exit code;
+    /// when `None`, verification falls back to the advisor.
+    pub test_command: Option<Vec<String>>,
 }
 
 impl Default for EngineConfig {
@@ -87,6 +92,7 @@ impl Default for EngineConfig {
             repo_path: PathBuf::from("."),
             worktree_base: PathBuf::from(".oryn/worktrees"),
             default_auth: AuthMode::Subscription,
+            test_command: None,
         }
     }
 }
@@ -333,7 +339,14 @@ impl Engine {
         let worktrees = self.prepare_worktrees(available);
         let matrix = resolve_matrix(available, profiles);
         let registry = self.build_registry(available);
-        let verifier = self.verifier();
+        // Verify by execution in each target's worktree (advisor as fallback).
+        let command = self.config.test_command.clone().unwrap_or_default();
+        let verifier = ExecutionVerifier::new(
+            self.runner.clone(),
+            worktrees.clone(),
+            command,
+            self.verifier(),
+        );
         let result = Orchestrator::run(mission, &registry, &matrix, prefix, &verifier)?;
         let diffs = self.collect_diffs(&result, &worktrees);
         Ok(RunArtifacts {
@@ -452,6 +465,7 @@ mod tests {
                 repo_path: PathBuf::from("/repo"),
                 worktree_base: PathBuf::from("/wt"),
                 default_auth: AuthMode::Subscription,
+                test_command: None,
             },
             Arc::new(FakeRunner {
                 cwds: Mutex::new(Vec::new()),
@@ -535,6 +549,7 @@ mod tests {
                 repo_path: PathBuf::from("/repo"),
                 worktree_base: PathBuf::from("/custom/base"),
                 default_auth: AuthMode::Subscription,
+                test_command: None,
             },
             runner.clone(),
             Arc::new(PassHttp),
@@ -554,6 +569,7 @@ mod tests {
                 repo_path: PathBuf::from("/repo"),
                 worktree_base: PathBuf::from("/wt"),
                 default_auth: AuthMode::Subscription,
+                test_command: None,
             },
             Arc::new(FakeRunner {
                 cwds: Mutex::new(Vec::new()),
@@ -631,6 +647,7 @@ mod tests {
                 repo_path: repo.path().to_path_buf(),
                 worktree_base: base.path().to_path_buf(),
                 default_auth: AuthMode::Subscription,
+                test_command: None,
             },
             Arc::new(WritingRunner),
             Arc::new(PassHttp),
@@ -662,5 +679,69 @@ mod tests {
         // Cleanup tears the worktree down.
         engine.cleanup_worktrees(&specs, None);
         assert!(!wt.exists(), "worktree removed by cleanup");
+    }
+
+    /// Runner that writes a file for the agent and returns a fixed exit code for
+    /// the test command, so we can drive verify-by-execution deterministically.
+    struct ProgrammableRunner {
+        test_program: String,
+        test_exit: i32,
+    }
+    impl ProcessRunner for ProgrammableRunner {
+        fn run(&self, inv: &HarnessInvocation) -> Result<ProcessOutput, RunError> {
+            if inv.program == self.test_program {
+                return Ok(ProcessOutput {
+                    stdout_lines: vec![],
+                    exit_code: self.test_exit,
+                });
+            }
+            let _ = std::fs::write(inv.cwd.join("agent_change.txt"), "x\n");
+            Ok(ProcessOutput {
+                stdout_lines: vec!["done".to_string()],
+                exit_code: 0,
+            })
+        }
+    }
+
+    fn run_with_test_exit(exit: i32) -> bool {
+        let repo = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().unwrap();
+        init_repo_with_commit(repo.path());
+        let engine = Engine::new(
+            EngineConfig {
+                advisor: AdvisorConfig::new("http://localhost:11434", "qwen2.5-coder"),
+                repo_path: repo.path().to_path_buf(),
+                worktree_base: base.path().to_path_buf(),
+                default_auth: AuthMode::Subscription,
+                test_command: Some(vec!["mytest".to_string()]),
+            },
+            Arc::new(ProgrammableRunner {
+                test_program: "mytest".into(),
+                test_exit: exit,
+            }),
+            // Advisor would always PASS — proving the exit code is authoritative.
+            Arc::new(PassHttp),
+            CapabilityCatalog::seed(),
+        );
+        let specs = vec![spec(
+            AgentFramework::Local,
+            "local-qwen-coder",
+            Pricing::ZERO,
+        )];
+        let profiles = CapabilityCatalog::seed().profiles;
+        let artifacts = engine
+            .run_mission_in_worktrees(&mission(), &specs, &profiles, &prefix())
+            .unwrap();
+        artifacts.result.outcomes[0].attempts[0].verdict.passed
+    }
+
+    #[test]
+    fn verify_by_execution_gates_on_test_exit_code() {
+        // Exit 0 → verified pass; non-zero → fail, even though the advisor passes.
+        assert!(run_with_test_exit(0), "zero exit should verify");
+        assert!(
+            !run_with_test_exit(1),
+            "non-zero exit must fail despite a passing advisor"
+        );
     }
 }

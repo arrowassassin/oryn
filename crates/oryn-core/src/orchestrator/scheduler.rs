@@ -60,12 +60,18 @@ pub struct Verdict {
 
 /// Decides whether a model's completion satisfies a subtask.
 ///
-/// Object-safe so the orchestrator can take `&dyn Verifier`. Real implementations
-/// verify *by execution* (run the tests, apply the diff, type-check); they live in
-/// a later segment. The contract here is pure and synchronous.
+/// Object-safe so the orchestrator can take `&dyn Verifier`. The `target` is
+/// passed so execution-based verifiers can run the project's tests in *that*
+/// target's worktree (see
+/// [`ExecutionVerifier`](crate::orchestrator::verify::ExecutionVerifier)).
 pub trait Verifier {
-    /// Judge `response` against `subtask`.
-    fn verify(&self, subtask: &Subtask, response: &CompletionResponse) -> Verdict;
+    /// Judge `response` (produced by `target`) against `subtask`.
+    fn verify(
+        &self,
+        target: &ExecutionTarget,
+        subtask: &Subtask,
+        response: &CompletionResponse,
+    ) -> Verdict;
 }
 
 // ── Attempt / outcomes ────────────────────────────────────────────────────────
@@ -208,7 +214,7 @@ impl Orchestrator {
             };
 
             spend.add(&response.usage, &provider.spec().pricing);
-            let verdict = verifier.verify(subtask, &response);
+            let verdict = verifier.verify(target, subtask, &response);
 
             attempts.push(Attempt {
                 target: target.clone(),
@@ -340,7 +346,12 @@ mod tests {
     }
 
     impl Verifier for FakeVerifier {
-        fn verify(&self, _subtask: &Subtask, response: &CompletionResponse) -> Verdict {
+        fn verify(
+            &self,
+            _target: &ExecutionTarget,
+            _subtask: &Subtask,
+            response: &CompletionResponse,
+        ) -> Verdict {
             let (passed, score) = self
                 .verdicts
                 .get(&response.text)
