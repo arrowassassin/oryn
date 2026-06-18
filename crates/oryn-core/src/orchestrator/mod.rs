@@ -14,6 +14,7 @@
 //! selection, budget enforcement, and result aggregation.
 
 pub mod capability;
+pub mod catalog;
 pub mod cost;
 pub mod discovery;
 pub mod prefix;
