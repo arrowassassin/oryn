@@ -80,6 +80,21 @@ pub enum SubtaskKind {
     Refactor,
 }
 
+impl SubtaskKind {
+    /// Every variant of [`SubtaskKind`] in a deterministic order.
+    ///
+    /// Used as the canonical iteration source by [`crate::orchestrator::capability`]
+    /// so that `resolve_matrix` always visits kinds in the same sequence.
+    pub const ALL: [SubtaskKind; 6] = [
+        SubtaskKind::MechanicalEdit,
+        SubtaskKind::TestGen,
+        SubtaskKind::DiffEdit,
+        SubtaskKind::LargeContext,
+        SubtaskKind::Debugging,
+        SubtaskKind::Refactor,
+    ];
+}
+
 // ---------------------------------------------------------------------------
 // Subtask
 // ---------------------------------------------------------------------------

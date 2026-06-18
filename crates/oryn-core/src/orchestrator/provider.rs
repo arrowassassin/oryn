@@ -14,6 +14,91 @@ use thiserror::Error;
 
 use crate::event::TokenUsage;
 
+// ── AgentFramework ────────────────────────────────────────────────────────────
+
+/// The agent framework that executes the model.
+///
+/// Each framework manages its own credentials and can access a different set of
+/// models. The routing atom is `(framework, model)` — an [`ExecutionTarget`].
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentFramework {
+    /// Anthropic's Claude Code CLI.
+    ClaudeCode,
+    /// OpenAI Codex CLI.
+    Codex,
+    /// Cursor IDE agent.
+    Cursor,
+    /// aider CLI agent.
+    Aider,
+    /// Google Gemini CLI.
+    GeminiCli,
+    /// A local model served via an OpenAI-compatible endpoint (e.g. Ollama).
+    Local,
+}
+
+impl fmt::Display for AgentFramework {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+            Self::Cursor => "cursor",
+            Self::Aider => "aider",
+            Self::GeminiCli => "gemini-cli",
+            Self::Local => "local",
+        };
+        f.write_str(s)
+    }
+}
+
+// ── ExecutionTarget ───────────────────────────────────────────────────────────
+
+/// The routing/execution atom: a `(framework, model)` pair.
+///
+/// The same model id accessed via two different frameworks counts as two distinct
+/// targets because each framework carries its own credentials and capabilities.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+pub struct ExecutionTarget {
+    /// The agent framework that owns the credentials for this target.
+    pub framework: AgentFramework,
+    /// The model to invoke within that framework.
+    pub model: ModelId,
+}
+
+impl ExecutionTarget {
+    /// Construct a new execution target.
+    pub fn new(framework: AgentFramework, model: ModelId) -> Self {
+        Self { framework, model }
+    }
+}
+
+impl fmt::Display for ExecutionTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.framework, self.model)
+    }
+}
+
 // ── ModelId ──────────────────────────────────────────────────────────────────
 
 /// Stable identifier for a model, e.g. `"claude-opus-4-5"` or
@@ -21,7 +106,9 @@ use crate::event::TokenUsage;
 ///
 /// Wraps a `String` the same way [`crate::ids::EventId`] does so handles cannot
 /// be confused with arbitrary strings.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// PartialOrd and Ord are required so ModelId can be used inside ExecutionTarget
+// and other ordered collections without explicit comparators.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ModelId(String);
 
 impl ModelId {
@@ -99,6 +186,19 @@ pub struct ModelSpec {
     pub pricing: Pricing,
     /// Maximum number of tokens the model accepts in a single context window.
     pub context_window: u32,
+    /// The agent framework through which this model is accessed.
+    pub framework: AgentFramework,
+}
+
+impl ModelSpec {
+    /// Return the [`ExecutionTarget`] for this spec.
+    ///
+    /// Two specs that share a model id but differ in framework produce distinct
+    /// targets, which is the intended behaviour — credentials and capabilities
+    /// are per-framework.
+    pub fn target(&self) -> ExecutionTarget {
+        ExecutionTarget::new(self.framework, self.id.clone())
+    }
 }
 
 // ── CompletionRequest / CompletionResponse ────────────────────────────────────
@@ -184,14 +284,16 @@ impl ProviderRegistry {
         self.providers.push(provider);
     }
 
-    /// Look up a provider by model id.
+    /// Look up a provider by [`ExecutionTarget`].
     ///
-    /// Returns the first registered provider whose [`ModelSpec::id`] matches
-    /// `id`, preserving insertion-order determinism.
-    pub fn get(&self, id: &ModelId) -> Option<&dyn ModelProvider> {
+    /// Returns the first registered provider whose [`ModelSpec::target`] matches
+    /// `target`, preserving insertion-order determinism. Using an
+    /// [`ExecutionTarget`] as the key ensures that the same model id accessed via
+    /// two different frameworks is treated as two distinct providers.
+    pub fn get(&self, target: &ExecutionTarget) -> Option<&dyn ModelProvider> {
         self.providers
             .iter()
-            .find(|p| p.spec().id == *id)
+            .find(|p| p.spec().target() == *target)
             .map(|p| p.as_ref())
     }
 
@@ -248,6 +350,7 @@ mod tests {
                 cache_write: 3.75,
             },
             context_window: 200_000,
+            framework: AgentFramework::ClaudeCode,
         }
     }
 
@@ -257,6 +360,7 @@ mod tests {
             kind: ModelKind::Local { endpoint: endpoint.into() },
             pricing: Pricing::ZERO,
             context_window: 8_192,
+            framework: AgentFramework::Local,
         }
     }
 
@@ -361,22 +465,29 @@ mod tests {
 
     // ── ProviderRegistry ──────────────────────────────────────────────────────
 
-    #[test]
-    fn registry_get_returns_registered_provider() {
-        let mut reg = ProviderRegistry::new();
-        let id = ModelId::new("m1");
-        let usage = TokenUsage { input: 10, output: 5, ..Default::default() };
-        reg.register(Box::new(FakeProvider::new(api_spec("m1"), "hi", usage)));
-
-        let found = reg.get(&id).expect("provider should be registered");
-        assert_eq!(found.spec().id, id);
+    fn target(framework: AgentFramework, id: &str) -> ExecutionTarget {
+        ExecutionTarget::new(framework, ModelId::new(id))
     }
 
     #[test]
-    fn registry_get_returns_none_for_missing_id() {
+    fn registry_get_returns_registered_provider() {
+        let mut reg = ProviderRegistry::new();
+        let t = target(AgentFramework::ClaudeCode, "m1");
+        let usage = TokenUsage { input: 10, output: 5, ..Default::default() };
+        reg.register(Box::new(FakeProvider::new(api_spec("m1"), "hi", usage)));
+
+        let found = reg.get(&t).expect("provider should be registered");
+        assert_eq!(found.spec().id, ModelId::new("m1"));
+    }
+
+    #[test]
+    fn registry_get_returns_none_for_missing_target() {
         let mut reg = ProviderRegistry::new();
         reg.register(Box::new(FakeProvider::new(api_spec("m1"), "", TokenUsage::default())));
-        assert!(reg.get(&ModelId::new("not-here")).is_none());
+        // Different id
+        assert!(reg.get(&target(AgentFramework::ClaudeCode, "not-here")).is_none());
+        // Same id but different framework
+        assert!(reg.get(&target(AgentFramework::Codex, "m1")).is_none());
     }
 
     #[test]
@@ -395,15 +506,30 @@ mod tests {
     }
 
     #[test]
-    fn registry_get_first_match_when_duplicate_ids() {
-        // Edge case: if two providers share an id, get returns the first one.
+    fn registry_get_first_match_when_duplicate_targets() {
+        // Edge case: if two providers share an ExecutionTarget, get returns the first one.
         let mut reg = ProviderRegistry::new();
         reg.register(Box::new(FakeProvider::new(api_spec("dup"), "first", TokenUsage::default())));
         reg.register(Box::new(FakeProvider::new(api_spec("dup"), "second", TokenUsage::default())));
 
-        let p = reg.get(&ModelId::new("dup")).unwrap();
+        let p = reg.get(&target(AgentFramework::ClaudeCode, "dup")).unwrap();
         let resp = p.complete(&simple_req()).unwrap();
         assert_eq!(resp.text, "first");
+    }
+
+    #[test]
+    fn registry_same_model_different_frameworks_are_distinct_targets() {
+        // The same model id via two frameworks must not collide.
+        let mut reg = ProviderRegistry::new();
+        let mut spec_codex = api_spec("m1");
+        spec_codex.framework = AgentFramework::Codex;
+        reg.register(Box::new(FakeProvider::new(api_spec("m1"), "claude-code-resp", TokenUsage::default())));
+        reg.register(Box::new(FakeProvider::new(spec_codex, "codex-resp", TokenUsage::default())));
+
+        let p1 = reg.get(&target(AgentFramework::ClaudeCode, "m1")).unwrap();
+        let p2 = reg.get(&target(AgentFramework::Codex, "m1")).unwrap();
+        assert_eq!(p1.complete(&simple_req()).unwrap().text, "claude-code-resp");
+        assert_eq!(p2.complete(&simple_req()).unwrap().text, "codex-resp");
     }
 
     #[test]
@@ -412,7 +538,7 @@ mod tests {
         let usage = TokenUsage { input: 200, output: 80, cache_read: 50, cache_write: 10 };
         reg.register(Box::new(FakeProvider::new(api_spec("opus"), "some code", usage)));
 
-        let p = reg.get(&ModelId::new("opus")).unwrap();
+        let p = reg.get(&target(AgentFramework::ClaudeCode, "opus")).unwrap();
         let resp = p.complete(&simple_req()).unwrap();
         assert_eq!(resp.text, "some code");
         assert_eq!(resp.usage.total(), 340);
@@ -434,6 +560,6 @@ mod tests {
     fn registry_default_is_empty() {
         let reg = ProviderRegistry::default();
         assert!(reg.specs().is_empty());
-        assert!(reg.get(&ModelId::new("any")).is_none());
+        assert!(reg.get(&target(AgentFramework::ClaudeCode, "any")).is_none());
     }
 }
