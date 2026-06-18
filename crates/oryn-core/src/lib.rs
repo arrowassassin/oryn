@@ -9,6 +9,7 @@ pub mod adapter;
 pub mod budget;
 pub mod event;
 pub mod ids;
+pub mod orchestrator;
 pub mod session;
 pub mod store;
 pub mod worktree;
