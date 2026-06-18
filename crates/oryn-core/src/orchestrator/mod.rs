@@ -18,6 +18,7 @@ pub mod capability;
 pub mod catalog;
 pub mod cost;
 pub mod discovery;
+pub mod engine;
 pub mod harness;
 pub mod prefix;
 pub mod provider;
