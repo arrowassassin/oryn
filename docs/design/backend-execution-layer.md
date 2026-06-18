@@ -199,3 +199,24 @@ All run at temperature 0 with a fixed seed ([`ADVISOR_SEED`]) for reproducibilit
   chosen in Settings → *Advisor · local model* (or `ORYN_ADVISOR_MODEL`). The
   Settings card's "Check setup" button runs `check_setup` on a background thread
   and shows the live result. Worktree base is `ORYN_WORKTREE_BASE`.
+
+### Intelligent catalog: live fetch → parked on disk → interval refresh
+
+Routing cost and capability are **data sourced live and pinned**, not nominal:
+
+- `oryn-core::orchestrator::pricing` — `PricingTable` + `parse_openrouter_models`
+  (real `/api/v1/models` shape → USD-per-million) + `PricingSource` trait + seed.
+- `oryn-core::orchestrator::catalog::parse_scored_list` — pure parser for real
+  leaderboard JSON into capability scores.
+- `oryn-core::orchestrator::catalog_store` — `CatalogBundle` (capability +
+  pricing) parked via a `Store`; `RefreshPolicy`/`is_stale`; `refresh_or_keep`
+  (offline-safe — keeps parked data when a source is down); `load_and_maybe_refresh`
+  (load parked → refresh if stale → re-park). Seed is always stale so it refreshes
+  on first run; a fresh bundle is pinned per run for determinism.
+- App I/O: `FsStore` (`~/.oryn/catalog.json`), `OpenRouterPricing` + a configurable
+  `HttpBenchmarkSource` over `ureq`. A background ticker (`Root`) refreshes off the
+  UI thread on startup and every 30 min, re-parking the result; `specs_from_adapters`
+  prices each target from the pinned snapshot.
+
+Env: `ORYN_CATALOG_PATH`, `ORYN_PRICING_URL` (default OpenRouter),
+`ORYN_BENCHMARK_URL` (+ `ORYN_BENCHMARK_DIMENSION`), `ORYN_REFRESH_SECS` (default 24h).
