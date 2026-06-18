@@ -17,14 +17,21 @@ use oryn_core::orchestrator::catalog::{
 use oryn_core::orchestrator::catalog_store::{
     CatalogBundle, RefreshPolicy, Store, StoreError, load_and_maybe_refresh,
 };
+use oryn_core::orchestrator::capability::CapabilityProfile;
 use oryn_core::orchestrator::engine::{AdvisorConfig, Engine, EngineConfig};
-use oryn_core::orchestrator::harness::AuthMode;
+use oryn_core::orchestrator::harness::{AuthMode, HarnessInvocation};
+use oryn_core::orchestrator::listing::{ListCommand, build_targets, default_list_command, parse_model_list};
 use oryn_core::orchestrator::pricing::{PricingSource, PricingTable, parse_openrouter_models};
-use oryn_core::orchestrator::provider::{AgentFramework, ModelId, ModelKind, ModelSpec, Pricing};
-use oryn_core::orchestrator::runner::SystemProcessRunner;
+use oryn_core::orchestrator::provider::{AgentFramework, ModelId, ModelSpec};
+use oryn_core::orchestrator::runner::{ProcessRunner, SystemProcessRunner};
 use oryn_core::orchestrator::task::{Subtask, SubtaskId, SubtaskKind};
+use std::collections::BTreeMap;
 
 use crate::launcher::Adapter;
+
+/// Capability score assigned to a discovered model we have no benchmark data for
+/// yet — enough to keep it routable until real benchmarks arrive.
+const DISCOVERY_BASELINE: f64 = 0.6;
 
 /// Current wall-clock seconds since the epoch (the clock lives in the I/O layer).
 pub fn now_unix() -> u64 {
@@ -179,24 +186,57 @@ pub fn build_engine(endpoint: &str, model: &str, capability: &CapabilityCatalog)
     Engine::new(config, Arc::new(SystemProcessRunner), Arc::new(UreqHttp), capability.clone())
 }
 
-/// Map the user's selected adapters into routable [`ModelSpec`]s, pricing each from
-/// the **pinned pricing snapshot** (fuzzy-matched by model id); local models are
-/// free, and anything unpriced falls back to zero so it still routes.
-pub fn specs_from_adapters(adapters: &[Adapter], pricing: &PricingTable) -> Vec<ModelSpec> {
-    adapters
-        .iter()
-        .filter(|a| a.enabled)
-        .map(|a| {
-            let framework = framework_for(a.cli);
-            let (kind, default_price) = if framework == AgentFramework::Local {
-                (ModelKind::Local { endpoint: "http://localhost:11434".into() }, Pricing::ZERO)
-            } else {
-                (ModelKind::Api { provider: a.cli.into() }, Pricing::ZERO)
-            };
-            let price = pricing.price_fuzzy(a.tag).unwrap_or(default_price);
-            ModelSpec { id: ModelId::new(a.tag), kind, pricing: price, context_window: 200_000, framework }
-        })
-        .collect()
+/// The list command for `framework`: an `ORYN_LIST_<CLI>` env override (whitespace
+/// -split), else the documented default. `None` means the framework exposes no
+/// listing and contributes no models unless configured.
+fn list_command_for(framework: AgentFramework, cli: &str) -> Option<ListCommand> {
+    let key = format!("ORYN_LIST_{}", cli.to_uppercase());
+    if let Ok(raw) = std::env::var(key) {
+        let mut parts = raw.split_whitespace().map(str::to_string);
+        if let Some(program) = parts.next() {
+            return Some(ListCommand { program, args: parts.collect() });
+        }
+    }
+    default_list_command(framework)
+}
+
+/// Ask each selected framework's CLI which models it can access right now, by
+/// running its list command via the real process runner and parsing the output.
+/// No hardcoded model names — whatever the CLI reports is what we get. Frameworks
+/// whose CLI is missing or exposes no listing simply contribute nothing.
+pub fn discover_targets(adapters: &[Adapter]) -> Vec<(AgentFramework, ModelId)> {
+    let runner = SystemProcessRunner;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut out = Vec::new();
+    for adapter in adapters.iter().filter(|a| a.enabled) {
+        let framework = framework_for(adapter.cli);
+        let Some(cmd) = list_command_for(framework, adapter.cli) else {
+            continue;
+        };
+        let inv = HarnessInvocation {
+            program: cmd.program,
+            args: cmd.args,
+            env: vec![],
+            stdin: None,
+            cwd: cwd.clone(),
+        };
+        if let Ok(output) = runner.run(&inv) {
+            for model in parse_model_list(framework, &output.stdout_lines) {
+                out.push((framework, model));
+            }
+        }
+    }
+    out
+}
+
+/// Discover models from the CLIs and enrich them into routable specs + capability
+/// profiles using the pinned catalog (live pricing + benchmarks, baseline otherwise).
+pub fn discover_specs(
+    adapters: &[Adapter],
+    bundle: &CatalogBundle,
+) -> (Vec<ModelSpec>, BTreeMap<ModelId, CapabilityProfile>) {
+    let discovered = discover_targets(adapters);
+    build_targets(&discovered, &bundle.pricing, &bundle.capability.profiles, DISCOVERY_BASELINE)
 }
 
 fn framework_for(cli: &str) -> AgentFramework {
@@ -210,14 +250,15 @@ fn framework_for(cli: &str) -> AgentFramework {
     }
 }
 
-/// A real readiness check: counts configured targets (priced from the pinned
-/// snapshot), constructs the engine, and makes a **live** advisor round-trip.
+/// A real readiness check: discovers models live from the CLIs, prices them from
+/// the pinned snapshot, constructs the engine, and makes a **live** advisor
+/// round-trip.
 pub fn check_setup(adapters: &[Adapter], endpoint: &str, model: &str, bundle: &CatalogBundle) -> String {
-    let specs = specs_from_adapters(adapters, &bundle.pricing);
+    let (specs, _profiles) = discover_specs(adapters, bundle);
     let engine = build_engine(endpoint, model, &bundle.capability);
     let advisor_status = probe_advisor(endpoint, model);
     format!(
-        "{} target(s) · pricing {} · worktrees {} · {}",
+        "{} model(s) discovered · pricing {} · worktrees {} · {}",
         specs.len(),
         bundle.pricing.provenance.source,
         engine.worktree_base().display(),

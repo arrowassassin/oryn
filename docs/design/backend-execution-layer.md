@@ -220,3 +220,24 @@ Routing cost and capability are **data sourced live and pinned**, not nominal:
 
 Env: `ORYN_CATALOG_PATH`, `ORYN_PRICING_URL` (default OpenRouter),
 `ORYN_BENCHMARK_URL` (+ `ORYN_BENCHMARK_DIMENSION`), `ORYN_REFRESH_SECS` (default 24h).
+
+### Dynamic model discovery (no hardcoded model names)
+
+CLIs change their available models constantly, so model names are never hardcoded
+in the routing path — they're discovered at runtime:
+
+1. `oryn-core::orchestrator::listing` — `default_list_command(framework)` returns
+   each CLI's documented "list models" command (`ollama list`, `aider
+   --list-models`; no invented flags for CLIs that lack one), `parse_model_list`
+   tolerantly extracts ids from the output, and `build_targets` enriches discovered
+   `(framework, model)` pairs into `ModelSpec`s + capability profiles using the
+   pinned pricing table (fuzzy) and a routable baseline for un-benchmarked models.
+2. App `backend::discover_targets` runs each selected framework's list command via
+   the real `SystemProcessRunner` (override per CLI with `ORYN_LIST_<CLI>`),
+   `discover_specs` enriches them from the parked catalog, and
+   `Engine::run_mission_with` routes on the discovered profiles.
+
+Flow: **CLI lists models → OpenRouter prices them + benchmarks score them → parked
+in the local table → deterministic cascade + local advisor plan and execute the
+next node.** The bundled seed (logical ids `opus`/`sonnet`/…) remains only as the
+offline fallback, never the live source of truth.
