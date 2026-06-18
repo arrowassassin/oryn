@@ -115,6 +115,34 @@ pub enum Msg {
     OpenTimeline(usize),
     StartRace,
     Promote(usize),
+    /// Choose the local advisor model from [`ADVISOR_MODELS`].
+    SetAdvisorModel(usize),
+}
+
+/// Local advisor models the user can pick in Settings (deterministic + reasoning).
+pub const ADVISOR_MODELS: [&str; 5] =
+    ["qwen2.5-coder:7b", "deepseek-r1:7b", "qwq", "llama3.2:3b", "qwen2.5-coder:1.5b"];
+
+/// User-chosen connection to the local advisor model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvisorPrefs {
+    /// OpenAI-compatible endpoint base URL (Ollama / llamafile / llama.cpp).
+    pub endpoint: String,
+    /// The selected model name.
+    pub model: String,
+    /// Last readiness-check result, shown in Settings.
+    pub status: Option<String>,
+}
+
+impl AdvisorPrefs {
+    /// Read defaults from the environment (`ORYN_ADVISOR_ENDPOINT`,
+    /// `ORYN_ADVISOR_MODEL`), falling back to a local Ollama with the default model.
+    pub fn from_env() -> Self {
+        let endpoint =
+            std::env::var("ORYN_ADVISOR_ENDPOINT").unwrap_or_else(|_| "http://localhost:11434".into());
+        let model = std::env::var("ORYN_ADVISOR_MODEL").unwrap_or_else(|_| ADVISOR_MODELS[0].into());
+        Self { endpoint, model, status: None }
+    }
 }
 
 impl Root {
@@ -140,6 +168,12 @@ impl Root {
             }
             Msg::StartRace => self.start_race(),
             Msg::Promote(i) => self.promote(i),
+            Msg::SetAdvisorModel(i) => {
+                if let Some(m) = ADVISOR_MODELS.get(i) {
+                    self.advisor.model = (*m).to_string();
+                    self.advisor.status = None;
+                }
+            }
         }
     }
 

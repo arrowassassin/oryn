@@ -16,3 +16,4 @@ path = "src/main.rs"
 [dependencies]
 gpui = "0.2.2"
 oryn-core = { path = "../oryn-core" }
+ureq = "2.12"

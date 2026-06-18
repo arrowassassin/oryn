@@ -182,3 +182,20 @@ on any networked machine the same command drives a real model unchanged.
 - **Low-end:** `qwen2.5-coder:1.5b` or `llama3.2:3b`.
 
 All run at temperature 0 with a fixed seed ([`ADVISOR_SEED`]) for reproducibility.
+
+## Production wiring (done)
+
+- `oryn-core::orchestrator::engine::Engine` is the single entrypoint: it takes an
+  `EngineConfig` (user-chosen advisor endpoint + model, worktree base, auth), an
+  injected `Arc<dyn ProcessRunner>` and `Arc<dyn Http>`, plus the pinned catalog,
+  and `run_mission(mission, specs, prefix)` does the whole route → spawn CLI →
+  parse → advisor-gate cascade.
+- `oryn-app::backend` supplies the real I/O: `UreqHttp` (the advisor transport)
+  and `SystemProcessRunner`, and `build_engine(endpoint, model)` constructs a fully
+  wired `Engine`. `check_setup` does a real readiness probe (constructs the engine,
+  counts configured targets, makes a live advisor round-trip).
+- The advisor connection is **user-configurable**: endpoint via
+  `ORYN_ADVISOR_ENDPOINT` (default `http://localhost:11434`), and the model is
+  chosen in Settings → *Advisor · local model* (or `ORYN_ADVISOR_MODEL`). The
+  Settings card's "Check setup" button runs `check_setup` on a background thread
+  and shows the live result. Worktree base is `ORYN_WORKTREE_BASE`.

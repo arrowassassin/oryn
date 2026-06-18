@@ -107,6 +107,21 @@ impl Engine {
         Self { config, runner, http, catalog }
     }
 
+    /// The configured worktree base directory.
+    pub fn worktree_base(&self) -> &std::path::Path {
+        &self.config.worktree_base
+    }
+
+    /// The configured advisor endpoint.
+    pub fn advisor_endpoint(&self) -> &str {
+        &self.config.advisor.endpoint
+    }
+
+    /// The configured advisor model.
+    pub fn advisor_model(&self) -> &str {
+        &self.config.advisor.model
+    }
+
     /// Filesystem-safe worktree directory for `target`, under the configured base.
     pub fn worktree_for(&self, target: &ExecutionTarget) -> PathBuf {
         let model = target.model.as_str().replace(['/', ':', ' ', '\\'], "-");
@@ -300,6 +315,19 @@ mod tests {
         let cwds = runner.cwds.lock().unwrap();
         assert!(!cwds.is_empty());
         assert!(cwds.iter().all(|p| p.starts_with("/custom/base")));
+    }
+
+    #[test]
+    fn config_getters_expose_user_choices() {
+        let e = Engine::new(
+            EngineConfig { advisor: AdvisorConfig::new("http://host:9999", "my-model"), worktree_base: PathBuf::from("/wt"), default_auth: AuthMode::Subscription },
+            Arc::new(FakeRunner { cwds: Mutex::new(Vec::new()) }),
+            Arc::new(PassHttp),
+            CapabilityCatalog::seed(),
+        );
+        assert_eq!(e.advisor_endpoint(), "http://host:9999");
+        assert_eq!(e.advisor_model(), "my-model");
+        assert_eq!(e.worktree_base(), std::path::Path::new("/wt"));
     }
 
     #[test]

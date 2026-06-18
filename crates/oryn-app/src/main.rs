@@ -6,6 +6,7 @@
 //! [`state::Msg`] (see [`state`]). The render tree is split per screen across the
 //! view modules, each implementing methods on [`Root`].
 
+mod backend;
 mod broker;
 mod colors;
 mod launcher;
@@ -28,7 +29,7 @@ use gpui::{
 use colors::{overlay, solid};
 use launcher::Adapter;
 use mission::{AgentRun, fmt_usd};
-use state::{Msg, Settings};
+use state::{AdvisorPrefs, Msg, Settings};
 use theme::Theme;
 
 /// A simple view header: an uppercase kicker over a large title. Shared by the
@@ -70,6 +71,8 @@ pub struct Root {
     pub selected: usize,
     /// Whether the live race simulation is advancing.
     pub playing: bool,
+    /// User-chosen local advisor connection (endpoint + model).
+    pub advisor: AdvisorPrefs,
     /// Background ticker driving the simulation (None in headless tests).
     _timer: Option<Task<()>>,
 }
@@ -105,6 +108,7 @@ impl Root {
             adapters: Adapter::available(),
             selected: 0,
             playing: true,
+            advisor: AdvisorPrefs::from_env(),
             _timer: None,
         }
     }

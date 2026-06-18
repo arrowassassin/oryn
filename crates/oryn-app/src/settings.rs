@@ -10,7 +10,7 @@ use gpui::{AnyElement, Context, FontWeight, ParentElement, SharedString, Styled,
 
 use crate::Root;
 use crate::colors::{overlay, solid, tint};
-use crate::state::{Density, FontChoice, Msg, ThemeChoice};
+use crate::state::{ADVISOR_MODELS, Density, FontChoice, Msg, ThemeChoice};
 use crate::theme::{ACCENTS, Theme};
 
 impl Root {
@@ -49,7 +49,101 @@ impl Root {
             .child(self.appearance_card(cx, t))
             .child(self.run_defaults_card(cx, t))
             .child(self.privacy_card(cx, t))
+            .child(self.advisor_card(cx, t))
             .child(worktree_card(t))
+    }
+
+    fn advisor_card(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
+        // Model picker chips — the user chooses the local advisor model.
+        let mut chips = div().flex().flex_wrap().gap(px(6.0));
+        for (i, m) in ADVISOR_MODELS.iter().enumerate() {
+            let active = self.advisor.model == *m;
+            chips = chips.child(
+                div()
+                    .id(("advmodel", i))
+                    .px(px(9.0))
+                    .py(px(4.0))
+                    .rounded(px(7.0))
+                    .text_size(px(11.0))
+                    .cursor_pointer()
+                    .on_click(self.on(cx, Msg::SetAdvisorModel(i)))
+                    .when(active, |d| d.bg(solid(t.accent.base)).text_color(solid(0x1A0F2E)).font_weight(FontWeight::SEMIBOLD))
+                    .when(!active, |d| d.bg(overlay(t.overlays.w04)).border_1().border_color(overlay(t.overlays.w08)).text_color(solid(t.text.t3)))
+                    .child(*m),
+            );
+        }
+
+        // "Check setup" runs a real readiness probe on a background thread.
+        let check = div()
+            .id("advcheck")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(30.0))
+            .px(px(13.0))
+            .rounded(px(8.0))
+            .bg(overlay(t.overlays.w05))
+            .border_1()
+            .border_color(overlay(t.overlays.w09))
+            .text_size(px(11.5))
+            .text_color(solid(t.text.t2))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _ev: &gpui::ClickEvent, _win, cx| {
+                this.advisor.status = Some("checking…".into());
+                cx.notify();
+                let endpoint = this.advisor.endpoint.clone();
+                let model = this.advisor.model.clone();
+                let adapters = this.adapters.clone();
+                cx.spawn(async move |weak, cx| {
+                    let status = cx
+                        .background_executor()
+                        .spawn(async move { crate::backend::check_setup(&adapters, &endpoint, &model) })
+                        .await;
+                    let _ = weak.update(cx, |this, cx| {
+                        this.advisor.status = Some(status);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }))
+            .child("Check setup");
+
+        let status_line: SharedString = self
+            .advisor
+            .status
+            .clone()
+            .unwrap_or_else(|| "not checked yet".to_string())
+            .into();
+
+        card(
+            t,
+            "ADVISOR · LOCAL MODEL",
+            div()
+                .flex()
+                .flex_col()
+                .child(setting_row(
+                    t,
+                    "Endpoint",
+                    "OpenAI-compatible · set via ORYN_ADVISOR_ENDPOINT",
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(solid(t.text.t2))
+                        .child(self.advisor.endpoint.clone()),
+                ))
+                .child(setting_row(t, "Model", "deterministic · runs locally · gates escalation", chips))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.0))
+                        .pt(px(12.0))
+                        .border_t_1()
+                        .border_color(overlay(t.overlays.w05))
+                        .child(div().flex_1().text_size(px(11.0)).text_color(solid(t.text.t5)).child(status_line))
+                        .child(check),
+                ),
+        )
     }
 
     fn appearance_card(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
