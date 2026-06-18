@@ -325,7 +325,7 @@ pub fn resolve_matrix(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestrator::provider::{ModelKind, Pricing};
+    use crate::orchestrator::provider::{AgentFramework, ModelKind, Pricing};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
