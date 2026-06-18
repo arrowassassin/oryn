@@ -10,15 +10,17 @@
 #![allow(dead_code)]
 
 mod colors;
+mod mission;
 mod theme;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, AppContext, Application, Bounds, Context, FontWeight, IntoElement, ParentElement, Render,
-    Styled, Window, WindowBounds, WindowOptions, div, px, size,
+    AnyElement, App, AppContext, Application, Bounds, Context, FontWeight, IntoElement,
+    ParentElement, Render, Styled, Window, WindowBounds, WindowOptions, div, px, size,
 };
 
 use colors::{overlay, solid, tint};
+use mission::AgentRun;
 use theme::{ACCENTS, Mode, Theme};
 
 /// Which primary view is active in the main area.
@@ -36,6 +38,7 @@ enum Screen {
 struct Root {
     theme: Theme,
     screen: Screen,
+    agents: Vec<AgentRun>,
 }
 
 impl Root {
@@ -43,6 +46,7 @@ impl Root {
         Self {
             theme: Theme::resolve(Mode::Dark, ACCENTS[0]),
             screen: Screen::Mission,
+            agents: AgentRun::sample(),
         }
     }
 
@@ -246,54 +250,44 @@ impl Root {
             .flex_1()
             .flex()
             .flex_col()
+            .min_w(px(0.0))
             .bg(solid(t.surfaces.bg))
-            // header
+            .child(match self.screen {
+                Screen::Mission => mission::mission_control_any(t, &self.agents),
+                other => self.placeholder(other),
+            })
+    }
+
+    /// A labelled placeholder for views not yet implemented.
+    fn placeholder(&self, screen: Screen) -> AnyElement {
+        let t = &self.theme;
+        let label = match screen {
+            Screen::Mission => "Mission Control",
+            Screen::Timeline => "Timeline — faithful trace",
+            Screen::Review => "Review & promote",
+            Screen::Broker => "Context broker",
+            Screen::Launch => "Launch a race",
+            Screen::Settings => "Settings",
+            Screen::Profile => "Profile",
+        };
+        div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
             .child(
                 div()
-                    .flex_none()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.0))
-                    .px(px(24.0))
-                    .pt(px(18.0))
-                    .pb(px(14.0))
-                    .border_b_1()
-                    .border_color(overlay(t.overlays.w06))
-                    .child(
-                        div()
-                            .text_size(px(9.5))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(solid(t.text.t5))
-                            .child("MISSION CONTROL"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(21.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(solid(t.text.t1))
-                            .child("Fix flaky token-refresh race"),
-                    ),
+                    .px(px(14.0))
+                    .py(px(9.0))
+                    .rounded(px(9.0))
+                    .border_1()
+                    .border_color(tint(t.accent.base, 0.3))
+                    .bg(tint(t.accent.base, 0.08))
+                    .text_size(px(12.0))
+                    .text_color(solid(t.accent.base))
+                    .child(format!("{label} — coming next")),
             )
-            // body placeholder — live race + agent cards land here next
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .px(px(14.0))
-                            .py(px(9.0))
-                            .rounded(px(9.0))
-                            .border_1()
-                            .border_color(tint(t.accent.base, 0.3))
-                            .bg(tint(t.accent.base, 0.08))
-                            .text_size(px(12.0))
-                            .text_color(solid(t.accent.base))
-                            .child("Mission Control — the race & agent cards render here next"),
-                    ),
-            )
+            .into_any_element()
     }
 }
 
