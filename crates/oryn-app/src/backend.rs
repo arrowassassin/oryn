@@ -545,6 +545,41 @@ fn probe_advisor(endpoint: &str, model: &str) -> String {
     }
 }
 
+// ── CLI availability ──────────────────────────────────────────────────────────
+
+/// Whether an executable named `bin` is found on `PATH`. Real detection — checks
+/// each `PATH` entry for an existing (executable, on Unix) file.
+pub fn is_on_path(bin: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate = dir.join(bin);
+        match std::fs::metadata(&candidate) {
+            Ok(meta) if meta.is_file() => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    meta.permissions().mode() & 0o111 != 0
+                }
+                #[cfg(not(unix))]
+                {
+                    true
+                }
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Mark which adapters' CLIs are actually installed, so Launch shows real
+/// availability instead of a static hint.
+pub fn mark_cli_availability(adapters: &mut [Adapter]) {
+    for a in adapters.iter_mut() {
+        a.installed = is_on_path(a.cli);
+    }
+}
+
 // ── user identity ─────────────────────────────────────────────────────────────
 
 /// The local developer identity, read from real sources: the repo's git config,
@@ -1042,6 +1077,22 @@ mod tests {
         assert_eq!(loaded, cfg);
         // The transient advisor status is never persisted.
         assert!(loaded.advisor.status.is_none());
+    }
+
+    #[test]
+    fn is_on_path_finds_a_ubiquitous_binary() {
+        // `sh` exists on any unix CI runner; a nonsense name never does.
+        #[cfg(unix)]
+        assert!(is_on_path("sh"));
+        assert!(!is_on_path("oryn-definitely-not-a-real-binary-xyz"));
+    }
+
+    #[test]
+    fn mark_cli_availability_matches_path_lookup() {
+        let mut ads = Adapter::available();
+        mark_cli_availability(&mut ads);
+        // Each flag reflects the real PATH lookup for that CLI.
+        assert!(ads.iter().all(|a| a.installed == is_on_path(a.cli)));
     }
 
     #[test]

@@ -169,11 +169,13 @@ impl Root {
     pub fn headless() -> Self {
         let repo = RepoInfo::detect();
         let identity = UserIdentity::detect(&repo.root);
+        let mut adapters = Adapter::available();
+        backend::mark_cli_availability(&mut adapters);
         Self {
             settings: Settings::default(),
             screen: Screen::Mission,
             agents: Vec::new(),
-            adapters: Adapter::available(),
+            adapters,
             selected: 0,
             promoted: None,
             repo,

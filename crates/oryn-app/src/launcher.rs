@@ -25,6 +25,8 @@ pub struct Adapter {
     pub enabled: bool,
     /// Short status/auth hint shown on the row.
     pub tag: &'static str,
+    /// Whether the CLI binary is found on PATH (detected at startup).
+    pub installed: bool,
 }
 
 impl Adapter {
@@ -37,6 +39,7 @@ impl Adapter {
                 color: 0xC08CFF,
                 enabled: true,
                 tag: "subscription",
+                installed: false,
             },
             Adapter {
                 name: "Codex",
@@ -44,6 +47,7 @@ impl Adapter {
                 color: 0x4ED99A,
                 enabled: true,
                 tag: "subscription",
+                installed: false,
             },
             Adapter {
                 name: "Gemini CLI",
@@ -51,6 +55,7 @@ impl Adapter {
                 color: 0x7FA8FF,
                 enabled: true,
                 tag: "keyless",
+                installed: false,
             },
             Adapter {
                 name: "Aider",
@@ -58,6 +63,7 @@ impl Adapter {
                 color: 0xFFB454,
                 enabled: false,
                 tag: "api key",
+                installed: false,
             },
             Adapter {
                 name: "Cursor Agent",
@@ -65,6 +71,7 @@ impl Adapter {
                 color: 0x6AD6E0,
                 enabled: false,
                 tag: "planned",
+                installed: false,
             },
         ]
     }
@@ -282,6 +289,7 @@ impl Root {
                 ),
         )
         .child(div().flex_1())
+        // Auth hint.
         .child(
             div()
                 .px(px(7.0))
@@ -294,6 +302,25 @@ impl Root {
                 .text_color(solid(t.text.t5))
                 .child(a.tag),
         )
+        // Real install status (detected on PATH at startup).
+        .child({
+            let (label, hue) = if a.installed {
+                ("installed", t.status.green)
+            } else {
+                ("not found", t.text.t6)
+            };
+            div()
+                .px(px(7.0))
+                .py(px(2.0))
+                .rounded(px(5.0))
+                .bg(tint(hue, 0.13))
+                .border_1()
+                .border_color(tint(hue, 0.3))
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(solid(hue))
+                .child(label)
+        })
         .into_any_element()
     }
 
