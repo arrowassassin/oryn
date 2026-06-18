@@ -23,6 +23,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::orchestrator::{
     provider::{AgentFramework, ExecutionTarget, ModelId, ModelKind, ModelSpec, Pricing},
     task::SubtaskKind,
@@ -37,7 +39,7 @@ use crate::orchestrator::{
 /// rankings; they can be overridden by the user at session creation.
 ///
 /// `Eq` is intentionally NOT derived because `f64` does not implement `Eq`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityProfile {
     /// Maps each sub-task kind to a capability score in `[0.0, 1.0]`.
     pub scores: BTreeMap<SubtaskKind, f64>,

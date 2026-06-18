@@ -25,6 +25,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::orchestrator::{
@@ -43,7 +44,7 @@ pub const CATALOG_VERSION: &str = "1";
 ///
 /// `fetched_at_unix` is always supplied by the caller, never read from a clock,
 /// keeping refreshes deterministic and replayable.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CatalogProvenance {
     /// Identifier of the source the profiles were derived from (e.g.
     /// `"bundled-seed"`, `"aider-polyglot"`).
@@ -159,6 +160,47 @@ pub fn map_benchmarks(
     out
 }
 
+/// Parse a real leaderboard JSON into [`RawBenchmarks`] for a single `dimension`.
+///
+/// Accepts a top-level array, or an object with a `data`/`results`/`leaderboard`
+/// array. Each entry needs a model name (`model`/`name`/`id`) and a score
+/// (`score`/`pass_rate`/`resolved`/`percent`/`acc`). Scores above `1.0` are treated
+/// as percentages and divided by 100; all are clamped to `0.0..=1.0`. Tolerant of
+/// extra fields and unknown entries (skipped), never panicking on drift.
+pub fn parse_scored_list(body: &str, dimension: &str) -> Result<RawBenchmarks, SourceError> {
+    use serde_json::Value;
+    let root: Value = serde_json::from_str(body).map_err(|e| SourceError::Malformed(e.to_string()))?;
+    let rows = root
+        .as_array()
+        .or_else(|| root.get("data").and_then(Value::as_array))
+        .or_else(|| root.get("results").and_then(Value::as_array))
+        .or_else(|| root.get("leaderboard").and_then(Value::as_array))
+        .ok_or_else(|| SourceError::Malformed("no array of results".into()))?;
+
+    let mut metrics: BTreeMap<ModelId, BTreeMap<String, f64>> = BTreeMap::new();
+    for row in rows {
+        let model = ["model", "name", "id"]
+            .iter()
+            .find_map(|k| row.get(*k).and_then(Value::as_str));
+        let score = ["score", "pass_rate", "resolved", "percent", "acc"]
+            .iter()
+            .find_map(|k| row.get(*k).and_then(Value::as_f64));
+        if let (Some(model), Some(mut score)) = (model, score) {
+            if score > 1.0 {
+                score /= 100.0;
+            }
+            metrics
+                .entry(ModelId::new(model))
+                .or_default()
+                .insert(dimension.to_string(), score.clamp(0.0, 1.0));
+        }
+    }
+    if metrics.is_empty() {
+        return Err(SourceError::Malformed("no scored entries".into()));
+    }
+    Ok(RawBenchmarks { metrics })
+}
+
 // ── SourceError ────────────────────────────────────────────────────────────────
 
 /// Errors a [`CapabilitySource`] can return.
@@ -197,7 +239,7 @@ pub trait CapabilitySource {
 /// A pinned, provenance-stamped snapshot of capability profiles.
 ///
 /// `Eq` is not derived because profile scores are `f64`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityCatalog {
     /// Per-model capability profiles.
     pub profiles: BTreeMap<ModelId, CapabilityProfile>,
@@ -502,5 +544,43 @@ mod tests {
         };
         let b = a.clone();
         assert_eq!(a, b);
+    }
+
+    // ── parse_scored_list ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_scored_list_array_with_percentages() {
+        let raw = parse_scored_list(
+            r#"[{"model":"opus","pass_rate":92.0},{"model":"sonnet","pass_rate":80}]"#,
+            "swe-bench",
+        )
+        .unwrap();
+        approx(raw.metrics[&ModelId::new("opus")]["swe-bench"], 0.92);
+        approx(raw.metrics[&ModelId::new("sonnet")]["swe-bench"], 0.80);
+    }
+
+    #[test]
+    fn parse_scored_list_handles_results_envelope_and_fraction_scores() {
+        let raw = parse_scored_list(
+            r#"{"results":[{"name":"gemini-2.5-pro","score":0.75}]}"#,
+            "aider-polyglot",
+        )
+        .unwrap();
+        approx(raw.metrics[&ModelId::new("gemini-2.5-pro")]["aider-polyglot"], 0.75);
+    }
+
+    #[test]
+    fn parse_scored_list_feeds_map_benchmarks() {
+        let raw = parse_scored_list(r#"[{"model":"opus","score":0.9}]"#, "aider-polyglot").unwrap();
+        let profiles = map_benchmarks(&raw, &default_weights());
+        // MechanicalEdit = 1.0 * aider-polyglot → 0.9
+        approx(profiles[&ModelId::new("opus")].score(SubtaskKind::MechanicalEdit), 0.9);
+    }
+
+    #[test]
+    fn parse_scored_list_rejects_malformed() {
+        assert!(parse_scored_list("{}", "d").is_err());
+        assert!(parse_scored_list("garbage", "d").is_err());
+        assert!(parse_scored_list("[]", "d").is_err());
     }
 }

@@ -16,11 +16,13 @@
 pub mod advisor;
 pub mod capability;
 pub mod catalog;
+pub mod catalog_store;
 pub mod cost;
 pub mod discovery;
 pub mod engine;
 pub mod harness;
 pub mod prefix;
+pub mod pricing;
 pub mod provider;
 pub mod runner;
 pub mod scheduler;
