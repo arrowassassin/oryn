@@ -468,6 +468,10 @@ mod tests {
             gross_usd: gross,
             saved_usd: 0.0,
             note: "done".into(),
+            store_artifacts: 0,
+            store_bytes: 0,
+            ctx_offered_bytes: 0,
+            ctx_stored_bytes: 0,
         }
     }
 

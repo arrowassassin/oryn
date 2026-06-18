@@ -19,43 +19,34 @@ impl Root {
         // Real numbers from the last run + the detected repo. Before any run, the
         // spend figures are zero and the repo-file count still reflects the real
         // cache-stable prefix the next run will share.
-        let files = self.repo.files.len();
-        let (gross, saved, frac) = self
-            .report
-            .as_ref()
-            .map(|r| {
-                let frac = if r.gross_usd + r.saved_usd > 0.0 {
-                    r.saved_usd / (r.gross_usd + r.saved_usd) * 100.0
-                } else {
-                    0.0
-                };
-                (r.gross_usd, r.saved_usd, frac)
-            })
-            .unwrap_or((0.0, 0.0, 0.0));
-        let tokens = self.report.as_ref().map(|r| r.total_tokens()).unwrap_or(0);
+        // Real on-disk content-addressed store stats (persisted across runs).
+        let store = crate::backend::ArtifactStore::open();
+        let (artifacts, bytes) = store.stats();
+        let dedup = self.report.as_ref().map(|r| r.dedup_ratio()).unwrap_or(1.0);
+        let saved = self.report.as_ref().map(|r| r.saved_usd).unwrap_or(0.0);
 
         let stats = div()
             .flex()
             .gap(px(14.0))
             .child(stat_card(
                 &t,
-                "Prefix files",
-                &files.to_string(),
-                "shared, content-addressed",
+                "Artifacts",
+                &artifacts.to_string(),
+                &format!("{} on disk · content-addressed", fmt_bytes(bytes)),
                 t.text.t1,
             ))
             .child(stat_card(
                 &t,
-                "Tokens routed",
-                &crate::mission::fmt_k(tokens),
-                &format!("${gross:.2} gross spend"),
-                t.text.t1,
+                "Dedup ratio",
+                &format!("{dedup:.1}×"),
+                "context offered ÷ uniquely stored",
+                t.status.green,
             ))
             .child(stat_card(
                 &t,
                 "Cache savings",
                 &format!("${saved:.2}"),
-                &format!("{frac:.0}% off the no-cache baseline"),
+                "prompt-cache reads vs. no-cache",
                 t.status.green,
             ));
 
@@ -84,6 +75,17 @@ impl Root {
                     .child(prefix_panel(&t)),
             )
             .into_any_element()
+    }
+}
+
+/// Human-readable byte size (B / KB / MB).
+fn fmt_bytes(n: u64) -> String {
+    if n >= 1024 * 1024 {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    } else if n >= 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else {
+        format!("{n} B")
     }
 }
 

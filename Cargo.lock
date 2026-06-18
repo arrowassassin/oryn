@@ -3617,9 +3617,11 @@ name = "oryn-app"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "hex",
  "oryn-core",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "ureq",
 ]

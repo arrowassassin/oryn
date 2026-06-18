@@ -545,6 +545,66 @@ fn probe_advisor(endpoint: &str, model: &str) -> String {
     }
 }
 
+// ── content-addressed artifact store ──────────────────────────────────────────
+
+/// A persistent, content-addressed blob store: each artifact is written once at
+/// a path named by the lowercase hex SHA-256 of its bytes. Identical content
+/// (e.g. the cache-stable prefix shared across every racing target) is therefore
+/// stored exactly once — the dedup primitive behind the Broker view.
+pub struct ArtifactStore {
+    dir: PathBuf,
+}
+
+impl ArtifactStore {
+    /// Open the store at `ORYN_STORE_PATH`, else `~/.oryn/store`.
+    pub fn open() -> Self {
+        let dir = std::env::var("ORYN_STORE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                PathBuf::from(home).join(".oryn").join("store")
+            });
+        Self::at(dir)
+    }
+
+    /// Open a store rooted at `dir` (used by tests).
+    pub fn at(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+
+    /// Store `bytes`, returning the content id and whether it was newly written
+    /// (`false` means an identical blob already existed — a dedup hit).
+    pub fn put(&self, bytes: &[u8]) -> (String, bool) {
+        use sha2::{Digest, Sha256};
+        let id = hex::encode(Sha256::digest(bytes));
+        let _ = std::fs::create_dir_all(&self.dir);
+        let path = self.dir.join(&id);
+        if path.exists() {
+            return (id, false);
+        }
+        let is_new = std::fs::write(&path, bytes).is_ok();
+        (id, is_new)
+    }
+
+    /// `(artifact_count, total_bytes)` currently on disk.
+    pub fn stats(&self) -> (usize, u64) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return (0, 0);
+        };
+        let mut count = 0;
+        let mut bytes = 0;
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata()
+                && meta.is_file()
+            {
+                count += 1;
+                bytes += meta.len();
+            }
+        }
+        (count, bytes)
+    }
+}
+
 // ── CLI availability ──────────────────────────────────────────────────────────
 
 /// Whether an executable named `bin` is found on `PATH`. Real detection — checks
@@ -864,6 +924,24 @@ pub struct LiveReport {
     pub saved_usd: f64,
     /// Human-readable headline (e.g. a setup hint when nothing was discovered).
     pub note: String,
+    /// Content-addressed store stats: total unique artifacts + bytes on disk.
+    pub store_artifacts: usize,
+    pub store_bytes: u64,
+    /// Context bytes this run offered to the store vs. uniquely stored — the real
+    /// dedup the shared cache-stable prefix produces (offered ≥ stored).
+    pub ctx_offered_bytes: u64,
+    pub ctx_stored_bytes: u64,
+}
+
+impl LiveReport {
+    /// Dedup ratio for this run's context bytes (offered / stored), ≥ 1.0.
+    pub fn dedup_ratio(&self) -> f64 {
+        if self.ctx_stored_bytes == 0 {
+            1.0
+        } else {
+            self.ctx_offered_bytes as f64 / self.ctx_stored_bytes as f64
+        }
+    }
 }
 
 impl LiveReport {
@@ -913,6 +991,10 @@ pub fn run_live(
             saved_usd: 0.0,
             note: "No models discovered. Install & sign in to a coding CLI (claude, codex, gemini, aider) and select it in Launch — Oryn lists exactly the models each CLI reports."
                 .to_string(),
+            store_artifacts: { let (n, _) = ArtifactStore::open().stats(); n },
+            store_bytes: { let (_, b) = ArtifactStore::open().stats(); b },
+            ctx_offered_bytes: 0,
+            ctx_stored_bytes: 0,
         };
     }
 
@@ -979,6 +1061,38 @@ pub fn run_live(
                 passed,
                 result.outcomes.len(),
             );
+
+            // Persist artifacts content-addressed; the cache-stable prefix is the
+            // same bytes for every target, so it's offered N times but stored once
+            // — real dedup, surfaced in the Broker.
+            let store = ArtifactStore::open();
+            let mut seen = std::collections::BTreeSet::new();
+            let mut offered = 0u64;
+            let mut stored = 0u64;
+            let mut offer = |bytes: &[u8]| {
+                if bytes.is_empty() {
+                    return;
+                }
+                offered += bytes.len() as u64;
+                let (id, _) = store.put(bytes);
+                if seen.insert(id) {
+                    stored += bytes.len() as u64;
+                }
+            };
+            let prefix_bytes = prefix.render().into_bytes();
+            for _ in 0..specs.len() {
+                offer(&prefix_bytes);
+            }
+            for outcome in &result.outcomes {
+                if let Some(winner) = &outcome.winner {
+                    offer(outcome.response_text.as_bytes());
+                    if let Some(d) = artifacts.diffs.get(winner) {
+                        offer(d.raw().as_bytes());
+                    }
+                }
+            }
+            let (store_artifacts, store_bytes) = store.stats();
+
             LiveReport {
                 goal: goal.to_string(),
                 repo_label: repo.label.clone(),
@@ -990,6 +1104,10 @@ pub fn run_live(
                 gross_usd: result.spend.gross_usd,
                 saved_usd: result.spend.saved_usd,
                 note,
+                store_artifacts,
+                store_bytes,
+                ctx_offered_bytes: offered,
+                ctx_stored_bytes: stored,
             }
         }
         Err(e) => LiveReport {
@@ -1003,6 +1121,10 @@ pub fn run_live(
             gross_usd: 0.0,
             saved_usd: 0.0,
             note: format!("Run could not start: {e}"),
+            store_artifacts: 0,
+            store_bytes: 0,
+            ctx_offered_bytes: 0,
+            ctx_stored_bytes: 0,
         },
     }
 }
@@ -1077,6 +1199,21 @@ mod tests {
         assert_eq!(loaded, cfg);
         // The transient advisor status is never persisted.
         assert!(loaded.advisor.status.is_none());
+    }
+
+    #[test]
+    fn artifact_store_dedups_identical_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ArtifactStore::at(dir.path());
+        let (id1, new1) = store.put(b"shared prefix bytes");
+        let (id2, new2) = store.put(b"shared prefix bytes");
+        assert_eq!(id1, id2, "same content → same id");
+        assert!(new1, "first write is new");
+        assert!(!new2, "identical content is a dedup hit");
+        store.put(b"a different artifact");
+        let (count, bytes) = store.stats();
+        assert_eq!(count, 2, "two unique artifacts stored");
+        assert!(bytes > 0);
     }
 
     #[test]
