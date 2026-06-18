@@ -825,4 +825,98 @@ mod tests {
         let r = editor("ab", 1);
         assert_eq!(r.task_with_caret(), "a\u{2502}b");
     }
+
+    // ── GUI render integration test ───────────────────────────────────────────
+
+    /// A real engine-shaped report so the Done board / Timeline / Review render
+    /// against populated rows.
+    fn sample_report() -> LiveReport {
+        let attempt = |fw: &str, won: bool| backend::LiveAttempt {
+            subtask: "implement".into(),
+            framework: fw.into(),
+            model: "model-x".into(),
+            tier_rank: 0,
+            input_tokens: 1200,
+            output_tokens: 340,
+            cost_usd: 0.42,
+            passed: won,
+            score: if won { 0.9 } else { 0.2 },
+            won,
+            response: if won {
+                "applied the fix".into()
+            } else {
+                String::new()
+            },
+            files_changed: if won { 2 } else { 0 },
+            added: if won { 14 } else { 0 },
+            removed: if won { 3 } else { 0 },
+            worktree_session: format!("oryn-{fw}-model-x"),
+        };
+        LiveReport {
+            goal: "Fix the flaky token-refresh race".into(),
+            repo_label: "acme/web".into(),
+            base_ref: "main@abc1234".into(),
+            advisor: "qwen2.5-coder:7b @ http://localhost:11434".into(),
+            discovered: 2,
+            subtasks: 1,
+            attempts: vec![attempt("codex", false), attempt("claude-code", true)],
+            gross_usd: 0.84,
+            saved_usd: 0.31,
+            note: "1 subtask(s) routed".into(),
+            store_artifacts: 3,
+            store_bytes: 4096,
+            ctx_offered_bytes: 9000,
+            ctx_stored_bytes: 3000,
+        }
+    }
+
+    /// Drives the real `Render` impl for every screen, both run phases, and the
+    /// open command palette in a headless GPUI test window — a genuine rendering
+    /// pass that would panic on any bad index/format in the view tree.
+    #[gpui::test]
+    fn renders_every_screen_without_panicking(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_window(|_window, cx| {
+            let mut root = Root::headless();
+            root.task_focus = Some(cx.focus_handle());
+            root.palette_focus = Some(cx.focus_handle());
+            root
+        });
+
+        let screens = [
+            Screen::Mission,
+            Screen::Timeline,
+            Screen::Review,
+            Screen::Broker,
+            Screen::Launch,
+            Screen::Settings,
+            Screen::Profile,
+        ];
+
+        // Phase 1: Idle (empty agents) — every screen must render.
+        for s in screens {
+            window
+                .update(cx, |view, window, cx| {
+                    view.screen = s;
+                    let _ = view.render(window, cx).into_any_element();
+                })
+                .unwrap();
+        }
+
+        // Phase 2: a completed run with real rows, plus the palette open.
+        window
+            .update(cx, |view, _window, _cx| {
+                view.ingest_report(sample_report());
+                view.palette_open = true;
+                view.palette_query = "go".into();
+            })
+            .unwrap();
+        for s in screens {
+            window
+                .update(cx, |view, window, cx| {
+                    view.screen = s;
+                    let _ = view.render(window, cx).into_any_element();
+                })
+                .unwrap();
+        }
+    }
 }

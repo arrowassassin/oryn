@@ -23,4 +23,5 @@ sha2 = "0.11.0"
 ureq = "2.12"
 
 [dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }
 tempfile = "3.27.0"
