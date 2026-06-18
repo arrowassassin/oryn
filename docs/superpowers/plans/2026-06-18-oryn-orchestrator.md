@@ -59,7 +59,8 @@ Routing is DERIVED deterministically from discovered targets + pinned capability
 
 **Tests:** `SubtaskKind::ALL` = 6 unique. `resolve_matrix` over 3–4 fake specs (mix local-zero-cost + priced api, across ≥2 frameworks) → per kind only capability-clearing targets, cheapest-first (a local/zero-cost target precedes a pricier equal-or-lower-score one; a sub-bar model excluded; a model absent from `available` never appears even if profiled). Deterministic (resolve twice → identical). `default_profiles()` resolved against all known ids reproduces the research orderings.
 
-### Task 6: Cost model with cache economics (`orchestrator/cost.rs`)
+### Task 6: Cost model with cache economics (`orchestrator/cost.rs`) — ✅ DONE (3a09dfc)
+`cost_usd`, `baseline_usd`, `cache_savings_usd` (clamped ≥0), `Spend {gross_usd, saved_usd}` with `add`/`baseline_usd`/`fraction_saved`. 24 tests, 100% coverage.
 
 - `cost_usd(usage, p)` = `(input*p.input + output*p.output + cache_read*p.cache_read + cache_write*p.cache_write)/1e6` (per-million).
 - `baseline_usd(usage, p)` = no-cache cost: `((input+cache_read+cache_write)*p.input + output*p.output)/1e6`.
@@ -68,7 +69,8 @@ Routing is DERIVED deterministically from discovered targets + pinned capability
 
 **Tests:** known Anthropic-like numbers (input 3.0/out 15.0/cache_read 0.30/cache_write 3.75 per M); cache_read ≈0.1× input; savings ≥0; zero-usage→0; `Spend` accumulates; `fraction_saved` guards zero. Float asserts via `(a-b).abs() < 1e-9`.
 
-### Task 7: The cascade scheduler (`orchestrator/scheduler.rs`) — heart; depends on Tasks 1–6
+### Task 7: The cascade scheduler (`orchestrator/scheduler.rs`) — heart; depends on Tasks 1–6 — ✅ DONE (03ccb1b)
+`Verifier`/`Verdict`/`Attempt`/`SubtaskOutcome`/`MissionResult`, `Orchestrator::run` (topo → tier cheapest-first → complete vs prefix at temp 0 / `FIXED_SEED` → verify → stop on pass / escalate on fail; missing+erroring providers skipped; `NoCandidates` when none attemptable; all-fail best-effort winner by total tie-break). 13 tests, ~100% coverage.
 
 - `trait Verifier { fn verify(&self, subtask: &Subtask, response: &CompletionResponse) -> Verdict; }`
 - `Verdict { passed: bool, score: f64 }` (no `Eq`).
@@ -79,7 +81,8 @@ Routing is DERIVED deterministically from discovered targets + pinned capability
 
 **Tests (crate-local `FakeProvider`+`FakeVerifier`):** cheap tier passes → one attempt, winner=tier-0 target (cheaper); cheap fails→next passes (escalation recorded); all fail→tie-break winner asserted exactly; spend accumulates; same mission twice → identical `MissionResult`; missing provider for a tier target skipped not panicked.
 
-### Task 8: Capability catalog + benchmark sources (`orchestrator/catalog.rs`)
+### Task 8: Capability catalog + benchmark sources (`orchestrator/catalog.rs`) — ✅ DONE (fda908f)
+`CatalogProvenance`, `RawBenchmarks`, `DimensionWeights`/`default_weights`, `map_benchmarks` (normalized weighted clamped sum), `CapabilitySource`/`SourceError`, `CapabilityCatalog::{seed, refreshed}`. 18 tests, 100% coverage.
 
 Refresh capability from a trusted benchmark source on an interval into a pinned snapshot; missions bind + record provenance. Network fetch deferred behind a trait.
 
@@ -94,6 +97,11 @@ Refresh capability from a trusted benchmark source on an interval into a pinned 
 **Tests (crate-local `FakeSource`):** `seed()` provenance + profiles == `default_profiles()`; `map_benchmarks` deterministic & expected per-kind ordering (aider-strong model outranks aider-weak for DiffEdit); `refreshed()` provenance `fetched_at_unix == now_unix` passed in, profiles reflect metrics; `refreshed()` surfaces `SourceError` on fake failure; `resolve_matrix(specs, &catalog.profiles)` integrates.
 
 ---
+
+### Post-Task-8 review fixes
+- **discovery wired (2aae718):** `orchestrator/discovery.rs` (Task 4) was committed but never added to `mod.rs`, so its 15 tests never compiled. Wired in + corrected a stale framework-ordering test.
+- **framework_rank (5d28e41):** the plan's documented tunable framework tie-break (Task 5) was missing — framework ordering fell out implicitly of enum declaration order. Made it an explicit, auditable `framework_rank` (Local preferred, then alphabetical) between the ModelKind and ExecutionTarget sort stages.
+- **integration smoke (ac64ad7):** `crates/oryn-core/tests/orchestrator_pipeline.rs` exercises discover → resolve(seed) → 3-subtask `Orchestrator::run` end-to-end.
 
 ## Verification (whole feature)
 - `cargo test -p oryn-core` green; `cargo clippy -p oryn-core --all-targets` clean; coverage ≥ 87% overall and per new module.
