@@ -282,13 +282,18 @@ impl Render for Root {
 fn main() {
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(820.0)), cx);
-        cx.open_window(
+        let opened = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
             |_window, cx| cx.new(Root::new),
-        )
-        .unwrap();
+        );
+        if let Err(err) = opened {
+            // No display (headless CI, missing DISPLAY/WAYLAND_DISPLAY, …):
+            // report cleanly and exit rather than panicking with a backtrace.
+            eprintln!("oryn: could not open a window: {err}");
+            std::process::exit(1);
+        }
     });
 }
