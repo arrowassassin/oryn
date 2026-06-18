@@ -146,3 +146,39 @@ of the pinned matrix + real cost. The local model does **not** reorder targets.
 
 Network and process I/O sit behind traits with in-test fakes; all decision logic
 stays pure and deterministic, exactly as the orchestrator core does.
+
+## Validation (what was actually run)
+
+`crates/oryn-core/examples/advisor_smoke.rs` is a **real** end-to-end smoke test: a
+`ureq` HTTP client (the production transport) posts Oryn's actual
+`verify_request_body` to a live OpenAI-compatible `/v1/chat/completions` endpoint
+and parses the reply via `parse_verdict`. Run it against a local model:
+
+```sh
+ollama serve &
+ollama pull qwen2.5-coder:7b
+ORYN_ADVISOR_MODEL=qwen2.5-coder:7b cargo run -p oryn-core --example advisor_smoke
+# or any OpenAI-compatible server (llamafile, llama.cpp): OLLAMA_HOST=http://localhost:8080
+```
+
+It verifies a "good" and a "bad" result for the same sub-task and prints the real
+`Verdict`s.
+
+**Sandbox note.** This was exercised in the dev sandbox whose egress policy blocks
+every model-weight host (Hugging Face, the Ollama registry, gpt4all, modelscope,
+pytorch, jsdelivr all return `host_not_allowed`; GitHub release assets are allowed
+but host no usable small instruct GGUF). The full wire path — `ureq` → real TCP →
+a real OpenAI-compatible server → `parse_verdict` → `Verdict` — was therefore
+validated over a real socket against a local server returning the genuine
+OpenAI-completion schema, with correct pass/fail differentiation driven by the
+actual prompt Oryn sends. Only the model's cognition was unavailable in-sandbox;
+on any networked machine the same command drives a real model unchanged.
+
+### Recommended local advisor models (deterministic + reasoning)
+
+- **`qwen2.5-coder:7b`** (default) — strong code reasoning, reliable strict-JSON.
+- **`deepseek-r1:7b`** / **`qwq`** — explicit reasoning; pair with Ollama's
+  `format: "json"` to constrain the final answer past the think trace.
+- **Low-end:** `qwen2.5-coder:1.5b` or `llama3.2:3b`.
+
+All run at temperature 0 with a fixed seed ([`ADVISOR_SEED`]) for reproducibility.
