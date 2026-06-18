@@ -20,5 +20,6 @@ pub mod discovery;
 pub mod harness;
 pub mod prefix;
 pub mod provider;
+pub mod runner;
 pub mod scheduler;
 pub mod task;
