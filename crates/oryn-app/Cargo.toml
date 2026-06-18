@@ -1,0 +1,18 @@
+[package]
+name = "oryn-app"
+description = "GPUI desktop frontend for Oryn — mission control for AI coding agents"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "oryn"
+path = "src/main.rs"
+
+[dependencies]
+gpui = "0.2.2"
+oryn-core = { path = "../oryn-core" }
