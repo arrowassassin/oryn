@@ -170,7 +170,7 @@ impl Root {
             .text_color(solid(t.text.t2))
             .cursor_pointer()
             .on_click(self.focus_task(cx))
-            .child(format!("{}\u{2588}", self.task));
+            .child(self.task_with_caret());
         if let Some(fh) = &self.task_focus {
             field = field
                 .track_focus(fh)

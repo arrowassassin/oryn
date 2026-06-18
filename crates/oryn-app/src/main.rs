@@ -103,6 +103,8 @@ pub struct Root {
     pub identity: UserIdentity,
     /// The editable task description that becomes the mission goal.
     pub task: String,
+    /// Caret position as a byte index into `task` (always on a char boundary).
+    pub task_cursor: usize,
     /// Focus handle for the task editor (None in headless tests).
     pub task_focus: Option<FocusHandle>,
     /// Lifecycle of the current run.
@@ -177,6 +179,7 @@ impl Root {
             repo,
             identity,
             task: DEFAULT_TASK.to_string(),
+            task_cursor: DEFAULT_TASK.len(),
             task_focus: None,
             phase: Phase::Idle,
             report: None,
@@ -233,30 +236,131 @@ impl Root {
         })
     }
 
-    /// Key handler for the editable task field: appends typed characters and
-    /// handles backspace / space / enter, so the task is genuinely edited in the
-    /// app (not a static label).
+    // ── task editing (pure, cursor-aware, unit-tested) ──────────────────────
+
+    /// Clamp the caret to a valid char boundary within `task`.
+    fn clamp_cursor(&mut self) {
+        if self.task_cursor > self.task.len() {
+            self.task_cursor = self.task.len();
+        }
+        while self.task_cursor < self.task.len() && !self.task.is_char_boundary(self.task_cursor) {
+            self.task_cursor += 1;
+        }
+    }
+
+    /// Insert text at the caret and advance past it.
+    pub fn task_insert(&mut self, s: &str) {
+        self.clamp_cursor();
+        self.task.insert_str(self.task_cursor, s);
+        self.task_cursor += s.len();
+    }
+
+    /// Delete the char before the caret (backspace).
+    pub fn task_backspace(&mut self) {
+        self.clamp_cursor();
+        if self.task_cursor == 0 {
+            return;
+        }
+        let prev = self.task[..self.task_cursor]
+            .chars()
+            .next_back()
+            .map(char::len_utf8)
+            .unwrap_or(0);
+        let start = self.task_cursor - prev;
+        self.task.replace_range(start..self.task_cursor, "");
+        self.task_cursor = start;
+    }
+
+    /// Delete the char at the caret (forward delete).
+    pub fn task_delete(&mut self) {
+        self.clamp_cursor();
+        if self.task_cursor >= self.task.len() {
+            return;
+        }
+        let next = self.task[self.task_cursor..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(0);
+        self.task
+            .replace_range(self.task_cursor..self.task_cursor + next, "");
+    }
+
+    /// Move the caret one char left.
+    pub fn task_left(&mut self) {
+        self.clamp_cursor();
+        if self.task_cursor > 0 {
+            let prev = self.task[..self.task_cursor]
+                .chars()
+                .next_back()
+                .map(char::len_utf8)
+                .unwrap_or(0);
+            self.task_cursor -= prev;
+        }
+    }
+
+    /// Move the caret one char right.
+    pub fn task_right(&mut self) {
+        self.clamp_cursor();
+        if self.task_cursor < self.task.len() {
+            let next = self.task[self.task_cursor..]
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(0);
+            self.task_cursor += next;
+        }
+    }
+
+    /// The task with a caret glyph rendered at the current position.
+    pub(crate) fn task_with_caret(&self) -> String {
+        let cur = self.task_cursor.min(self.task.len());
+        let cur = if self.task.is_char_boundary(cur) {
+            cur
+        } else {
+            self.task.len()
+        };
+        format!("{}\u{2502}{}", &self.task[..cur], &self.task[cur..])
+    }
+
+    /// Key handler for the editable task field — a real single-field editor with
+    /// caret movement (arrows/home/end), insert, backspace, forward-delete, and
+    /// clipboard paste (cmd/ctrl+V).
     pub fn task_key(
         &self,
         cx: &mut Context<Self>,
     ) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
         cx.listener(|this, e: &KeyDownEvent, _w, cx| {
             let k = &e.keystroke;
-            // Ignore command/control chords (shortcuts), not text entry.
-            if k.modifiers.control || k.modifiers.platform || k.modifiers.function {
+            let chord = k.modifiers.control || k.modifiers.platform;
+            // Paste is the one chord we handle as text entry.
+            if chord {
+                if k.key == "v"
+                    && let Some(text) = cx.read_from_clipboard().and_then(|c| c.text())
+                {
+                    this.task_insert(&text);
+                    cx.notify();
+                }
+                return;
+            }
+            if k.modifiers.function {
                 return;
             }
             match k.key.as_str() {
-                "backspace" => {
-                    this.task.pop();
-                }
-                "space" => this.task.push(' '),
-                "enter" => this.task.push('\n'),
+                "backspace" => this.task_backspace(),
+                "delete" => this.task_delete(),
+                "left" => this.task_left(),
+                "right" => this.task_right(),
+                "home" | "up" => this.task_cursor = 0,
+                "end" | "down" => this.task_cursor = this.task.len(),
+                "space" => this.task_insert(" "),
+                "enter" => this.task_insert("\n"),
                 _ => {
                     if let Some(ch) = &k.key_char {
-                        this.task.push_str(ch);
+                        this.task_insert(ch);
                     } else if k.key.chars().count() == 1 {
-                        this.task.push_str(&k.key);
+                        let key = k.key.clone();
+                        this.task_insert(&key);
                     } else {
                         return;
                     }
@@ -274,6 +378,7 @@ impl Root {
         cx.listener(|this, _e: &gpui::ClickEvent, window: &mut Window, cx| {
             if this.task == DEFAULT_TASK {
                 this.task.clear();
+                this.task_cursor = 0;
             }
             if let Some(fh) = this.task_focus.clone() {
                 window.focus(&fh);
@@ -533,4 +638,62 @@ fn main() {
             std::process::exit(1);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn editor(text: &str, cursor: usize) -> Root {
+        let mut r = Root::headless();
+        r.task = text.to_string();
+        r.task_cursor = cursor;
+        r
+    }
+
+    #[test]
+    fn insert_at_caret_advances() {
+        let mut r = editor("helo", 2);
+        r.task_insert("X");
+        assert_eq!(r.task, "heXlo");
+        assert_eq!(r.task_cursor, 3);
+    }
+
+    #[test]
+    fn backspace_and_delete_at_caret() {
+        let mut r = editor("abcd", 2);
+        r.task_backspace();
+        assert_eq!((r.task.as_str(), r.task_cursor), ("acd", 1));
+        r.task_delete();
+        assert_eq!((r.task.as_str(), r.task_cursor), ("ad", 1));
+    }
+
+    #[test]
+    fn caret_navigation_bounds() {
+        let mut r = editor("ab", 0);
+        r.task_left(); // no-op at start
+        assert_eq!(r.task_cursor, 0);
+        r.task_right();
+        r.task_right();
+        r.task_right(); // clamps at end
+        assert_eq!(r.task_cursor, 2);
+    }
+
+    #[test]
+    fn editing_is_utf8_safe() {
+        // Caret between two multibyte chars; backspace removes a whole char.
+        let mut r = editor("áé", "á".len());
+        r.task_insert("x");
+        assert_eq!(r.task, "áxé");
+        r.task_backspace();
+        assert_eq!(r.task, "áé");
+        // Caret rendering never slices mid-char.
+        let _ = r.task_with_caret();
+    }
+
+    #[test]
+    fn caret_glyph_rendered_at_position() {
+        let r = editor("ab", 1);
+        assert_eq!(r.task_with_caret(), "a\u{2502}b");
+    }
 }
