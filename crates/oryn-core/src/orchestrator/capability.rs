@@ -16,14 +16,15 @@
 //!    - [`cost_metric`] ascending (cheapest capable first)
 //!    - score descending (via [`f64::total_cmp`])
 //!    - local before API ([`ModelKind`])
-//!    - [`ModelId`] ascending (lexicographic tie-break)
-//! 3. Map each candidate to its [`ModelId`] and insert into the matrix only if
+//!    - [`framework_rank`] ascending (tunable framework preference)
+//!    - [`ExecutionTarget`] ascending (final lexicographic tie-break)
+//! 3. Map each candidate to its [`ExecutionTarget`] and insert into the matrix only if
 //!    the list is non-empty.
 
 use std::collections::BTreeMap;
 
 use crate::orchestrator::{
-    provider::{ExecutionTarget, ModelId, ModelKind, ModelSpec, Pricing},
+    provider::{AgentFramework, ExecutionTarget, ModelId, ModelKind, ModelSpec, Pricing},
     task::SubtaskKind,
 };
 
@@ -205,6 +206,30 @@ pub fn cost_metric(p: &Pricing) -> f64 {
     p.input + p.output
 }
 
+// ── framework_rank ──────────────────────────────────────────────────────────────
+
+/// Deterministic framework preference, used **only** as a tertiary tie-break in
+/// [`resolve_matrix`] after cost, capability score, and local-vs-API have all tied.
+///
+/// Lower rank is preferred. The default prefers a local runtime (rank 0) — it is
+/// free and private — then orders the remaining frameworks alphabetically by their
+/// stable [`AgentFramework`] `Display` string (`aider` < `claude-code` < `codex` <
+/// `cursor` < `gemini-cli`).
+///
+/// This is a **tunable policy knob**, not a capability statement: it never overrides
+/// cost or capability. It exists so the framework dimension of the tie-break is an
+/// explicit, auditable decision rather than an accident of enum declaration order.
+pub fn framework_rank(framework: AgentFramework) -> u8 {
+    match framework {
+        AgentFramework::Local => 0,
+        AgentFramework::Aider => 1,
+        AgentFramework::ClaudeCode => 2,
+        AgentFramework::Codex => 3,
+        AgentFramework::Cursor => 4,
+        AgentFramework::GeminiCli => 5,
+    }
+}
+
 // ── CapabilityMatrix ──────────────────────────────────────────────────────────
 
 /// Maps each [`SubtaskKind`] to an ordered tier of [`ExecutionTarget`]s.
@@ -262,7 +287,8 @@ impl Default for CapabilityMatrix {
 ///    - [`cost_metric`] ascending
 ///    - score descending (via [`f64::total_cmp`])
 ///    - local before API ([`ModelKind`])
-///    - [`ModelId`] ascending (tie-break)
+///    - [`framework_rank`] ascending (tunable framework preference)
+///    - [`ExecutionTarget`] ascending (final tie-break)
 /// 3. Insert the resulting tier only when it is non-empty.
 ///
 /// A model absent from `available` never appears even if it has a profile.
@@ -308,7 +334,12 @@ pub fn resolve_matrix(
             if ord != std::cmp::Ordering::Equal {
                 return ord;
             }
-            // 4. ExecutionTarget ascending (framework then model — total tie-break)
+            // 4. framework preference (tunable tertiary tie-break)
+            let ord = framework_rank(a_spec.framework).cmp(&framework_rank(b_spec.framework));
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+            // 5. ExecutionTarget ascending (framework then model — final total tie-break)
             a_spec.target().cmp(&b_spec.target())
         });
 
@@ -423,6 +454,46 @@ mod tests {
     fn cost_metric_sums_input_and_output() {
         let p = Pricing { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 };
         assert_eq!(cost_metric(&p), 18.0);
+    }
+
+    // ── framework_rank ────────────────────────────────────────────────────────
+
+    #[test]
+    fn framework_rank_prefers_local_then_alphabetical() {
+        // Local is rank 0; the rest follow their Display string alphabetically.
+        assert_eq!(framework_rank(AgentFramework::Local), 0);
+        assert_eq!(framework_rank(AgentFramework::Aider), 1);
+        assert_eq!(framework_rank(AgentFramework::ClaudeCode), 2);
+        assert_eq!(framework_rank(AgentFramework::Codex), 3);
+        assert_eq!(framework_rank(AgentFramework::Cursor), 4);
+        assert_eq!(framework_rank(AgentFramework::GeminiCli), 5);
+    }
+
+    #[test]
+    fn resolve_matrix_framework_rank_breaks_otherwise_exact_ties() {
+        // Two API specs identical in cost, score, and ModelKind, differing only in
+        // framework. framework_rank must order ClaudeCode (2) before Codex (3).
+        let kind = SubtaskKind::DiffEdit;
+        let api = |id: &str, fw: AgentFramework| ModelSpec {
+            id: ModelId::new(id),
+            kind: ModelKind::Api { provider: "test".into() },
+            pricing: Pricing { input: 3.0, output: 15.0, cache_read: 0.0, cache_write: 0.0 },
+            context_window: 200_000,
+            framework: fw,
+        };
+        // Same model id under two frameworks → same cost/score, distinct targets.
+        let available = vec![
+            api("m", AgentFramework::Codex),
+            api("m", AgentFramework::ClaudeCode),
+        ];
+        let mut profiles = BTreeMap::new();
+        profiles.insert(ModelId::new("m"), profile_for(kind, 0.9));
+
+        let tier = resolve_matrix(&available, &profiles);
+        let targets = tier.tier(kind);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].framework, AgentFramework::ClaudeCode, "lower framework_rank leads");
+        assert_eq!(targets[1].framework, AgentFramework::Codex);
     }
 
     // ── MIN_CAPABILITY ────────────────────────────────────────────────────────
