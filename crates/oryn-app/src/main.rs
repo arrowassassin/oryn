@@ -29,6 +29,7 @@ use gpui::{
 use colors::{overlay, solid};
 use launcher::Adapter;
 use mission::{AgentRun, fmt_usd};
+use oryn_core::orchestrator::catalog_store::CatalogBundle;
 use state::{AdvisorPrefs, Msg, Settings};
 use theme::Theme;
 
@@ -73,8 +74,12 @@ pub struct Root {
     pub playing: bool,
     /// User-chosen local advisor connection (endpoint + model).
     pub advisor: AdvisorPrefs,
+    /// The pinned model catalog (capability + live pricing) for this session.
+    pub catalog: CatalogBundle,
     /// Background ticker driving the simulation (None in headless tests).
     _timer: Option<Task<()>>,
+    /// Background ticker refreshing the parked catalog on an interval.
+    _catalog_timer: Option<Task<()>>,
 }
 
 impl Root {
@@ -94,12 +99,32 @@ impl Root {
                 }
             }
         });
+        // Refresh the parked catalog off the UI thread: on startup, then every
+        // 30 min check staleness and re-park if a refresh is due (offline-safe).
+        let catalog_timer = cx.spawn(async move |weak, cx| {
+            loop {
+                let bundle = cx.background_executor().spawn(async { backend::load_catalog() }).await;
+                let alive = weak
+                    .update(cx, |this, cx| {
+                        this.catalog = bundle;
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !alive {
+                    break;
+                }
+                cx.background_executor().timer(Duration::from_secs(30 * 60)).await;
+            }
+        });
+
         let mut root = Self::headless();
         root._timer = Some(timer);
+        root._catalog_timer = Some(catalog_timer);
         root
     }
 
-    /// Construct the app without a ticker — used by unit tests.
+    /// Construct the app without tickers and with the offline seed catalog — used
+    /// by unit tests and as the instant, network-free startup state.
     pub fn headless() -> Self {
         Self {
             settings: Settings::default(),
@@ -109,7 +134,9 @@ impl Root {
             selected: 0,
             playing: true,
             advisor: AdvisorPrefs::from_env(),
+            catalog: CatalogBundle::seed(),
             _timer: None,
+            _catalog_timer: None,
         }
     }
 

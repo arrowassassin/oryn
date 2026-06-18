@@ -94,10 +94,11 @@ impl Root {
                 let endpoint = this.advisor.endpoint.clone();
                 let model = this.advisor.model.clone();
                 let adapters = this.adapters.clone();
+                let bundle = this.catalog.clone();
                 cx.spawn(async move |weak, cx| {
                     let status = cx
                         .background_executor()
-                        .spawn(async move { crate::backend::check_setup(&adapters, &endpoint, &model) })
+                        .spawn(async move { crate::backend::check_setup(&adapters, &endpoint, &model, &bundle) })
                         .await;
                     let _ = weak.update(cx, |this, cx| {
                         this.advisor.status = Some(status);
