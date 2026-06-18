@@ -381,3 +381,318 @@ fn probe_advisor(endpoint: &str, model: &str) -> String {
         Err(e) => format!("advisor unreachable: {e}"),
     }
 }
+
+// ── repository detection ──────────────────────────────────────────────────────
+
+/// Real, dependency-free snapshot of the git repository the app is launched in:
+/// the worktree root, current branch, short HEAD sha, and a bounded list of
+/// source files used to build the cache-stable repo map. Everything here is read
+/// straight from the filesystem — no mockups.
+#[derive(Debug, Clone)]
+pub struct RepoInfo {
+    /// Absolute path to the repository (or the cwd when no `.git` is found).
+    pub root: PathBuf,
+    /// Short display label, e.g. `acme/web-platform`.
+    pub label: String,
+    /// Current branch name (or `detached`/`unknown`).
+    pub branch: String,
+    /// Short HEAD commit sha (best-effort; empty if unavailable).
+    pub head_short: String,
+    /// Bounded, sorted list of tracked-looking source files (for the repo map).
+    pub files: Vec<String>,
+}
+
+impl RepoInfo {
+    /// Detect the repository containing `start` (defaulting to the current dir),
+    /// walking up to the first ancestor that contains a `.git` entry.
+    pub fn detect() -> Self {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let root = find_git_root(&cwd).unwrap_or_else(|| cwd.clone());
+        let label = repo_label(&root);
+        let (branch, head_short) = git_head(&root);
+        let files = list_source_files(&root, 400);
+        Self { root, label, branch, head_short, files }
+    }
+
+    /// `branch@shortsha`, e.g. `main@4f2ab1c`.
+    pub fn base_ref(&self) -> String {
+        if self.head_short.is_empty() {
+            self.branch.clone()
+        } else {
+            format!("{}@{}", self.branch, self.head_short)
+        }
+    }
+}
+
+/// Walk up from `start` to the first directory containing a `.git`.
+fn find_git_root(start: &std::path::Path) -> Option<PathBuf> {
+    let mut dir = Some(start);
+    while let Some(d) = dir {
+        if d.join(".git").exists() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// `<parent>/<dir>` label for the repo, falling back to the final path segment.
+fn repo_label(root: &std::path::Path) -> String {
+    let name = root.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
+    match root.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()) {
+        Some(parent) if !parent.is_empty() => format!("{parent}/{name}"),
+        _ => name.to_string(),
+    }
+}
+
+/// Read the current branch + short HEAD sha straight from `.git`. Best-effort and
+/// dependency-free: parses `.git/HEAD`, then the matching loose ref (packed refs
+/// are not resolved — the sha is simply omitted in that case).
+fn git_head(root: &std::path::Path) -> (String, String) {
+    let head_path = root.join(".git").join("HEAD");
+    let Ok(head) = std::fs::read_to_string(&head_path) else {
+        return ("unknown".into(), String::new());
+    };
+    let head = head.trim();
+    if let Some(reference) = head.strip_prefix("ref: ") {
+        let branch = reference.rsplit('/').next().unwrap_or("unknown").to_string();
+        let sha = std::fs::read_to_string(root.join(".git").join(reference))
+            .ok()
+            .map(|s| s.trim().chars().take(7).collect::<String>())
+            .unwrap_or_default();
+        (branch, sha)
+    } else {
+        // Detached HEAD: the file holds the sha directly.
+        ("detached".into(), head.chars().take(7).collect())
+    }
+}
+
+/// Bounded recursive walk collecting source-looking files (repo-relative paths),
+/// skipping VCS/build/vendor directories. Sorted and capped at `limit`.
+fn list_source_files(root: &std::path::Path, limit: usize) -> Vec<String> {
+    const SKIP: &[&str] = &[".git", "target", "node_modules", ".oryn", "dist", "build", ".venv", "__pycache__"];
+    const EXT: &[&str] = &[
+        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "rb", "php", "cs", "c", "h", "cpp",
+        "hpp", "swift", "scala", "md", "toml", "yaml", "yml", "json", "css", "html", "sh",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if out.len() >= limit {
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') && name != ".gitignore" {
+                continue;
+            }
+            if path.is_dir() {
+                if !SKIP.contains(&name.as_ref()) {
+                    stack.push(path);
+                }
+            } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| EXT.contains(&e))
+                && let Ok(rel) = path.strip_prefix(root)
+            {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    out.sort();
+    out.truncate(limit);
+    out
+}
+
+// ── live mission run ──────────────────────────────────────────────────────────
+
+/// One real execution attempt the orchestrator made: a `(framework, model)`
+/// target run against a subtask, with the tokens it reported, the cost computed
+/// from the pinned pricing, and the advisor's verdict. `won` marks the attempt
+/// the cascade selected for that subtask.
+#[derive(Debug, Clone)]
+pub struct LiveAttempt {
+    pub subtask: String,
+    pub framework: String,
+    pub model: String,
+    pub tier_rank: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+    pub passed: bool,
+    pub score: f64,
+    pub won: bool,
+    pub response: String,
+}
+
+/// The full, real result of running a mission through the engine — what the UI
+/// renders. No simulated fields: every number comes from the orchestrator.
+#[derive(Debug, Clone)]
+pub struct LiveReport {
+    pub goal: String,
+    pub repo_label: String,
+    pub base_ref: String,
+    pub advisor: String,
+    /// Number of `(framework, model)` targets discovered from the CLIs.
+    pub discovered: usize,
+    pub subtasks: usize,
+    pub attempts: Vec<LiveAttempt>,
+    pub gross_usd: f64,
+    pub saved_usd: f64,
+    /// Human-readable headline (e.g. a setup hint when nothing was discovered).
+    pub note: String,
+}
+
+impl LiveReport {
+    /// Total tokens (input + output) across every attempt.
+    pub fn total_tokens(&self) -> u64 {
+        self.attempts.iter().map(|a| a.input_tokens + a.output_tokens).sum()
+    }
+}
+
+/// Run `goal` against the selected `adapters` through the **real** engine: live
+/// CLI model discovery, deterministic decomposition, the route-don't-race
+/// cascade, and the local advisor as the verifier. Blocking and side-effecting —
+/// call it on a background thread.
+pub fn run_live(
+    adapters: &[Adapter],
+    endpoint: &str,
+    model: &str,
+    bundle: &CatalogBundle,
+    repo: &RepoInfo,
+    goal: &str,
+) -> LiveReport {
+    use oryn_core::orchestrator::cost::cost_usd;
+    use oryn_core::orchestrator::decompose::decompose;
+    use oryn_core::orchestrator::prefix::{CacheStablePrefix, repo_map_from};
+    use oryn_core::orchestrator::provider::ExecutionTarget;
+
+    let advisor = format!("{model} @ {endpoint}");
+    let (specs, profiles) = discover_specs(adapters, bundle);
+
+    // Pricing lookup by target, so per-attempt cost is real (not estimated).
+    let pricing: BTreeMap<ExecutionTarget, _> =
+        specs.iter().map(|s| (s.target(), s.pricing)).collect();
+
+    if specs.is_empty() {
+        return LiveReport {
+            goal: goal.to_string(),
+            repo_label: repo.label.clone(),
+            base_ref: repo.base_ref(),
+            advisor,
+            discovered: 0,
+            subtasks: 0,
+            attempts: vec![],
+            gross_usd: 0.0,
+            saved_usd: 0.0,
+            note: "No models discovered. Install & sign in to a coding CLI (claude, codex, gemini, aider) and select it in Launch — Oryn lists exactly the models each CLI reports."
+                .to_string(),
+        };
+    }
+
+    let mission = decompose(format!("mission-{}", now_unix()), goal);
+    let prefix = CacheStablePrefix::builder()
+        .system("You are an expert software engineer working in an isolated git worktree. Make the smallest change that fully satisfies the task and keep the build and tests green.")
+        .repo_map(repo_map_from(&repo.files))
+        .task(goal)
+        .build();
+
+    let engine = build_engine(endpoint, model, &bundle.capability);
+    match engine.run_mission_with(&mission, &specs, &profiles, &prefix) {
+        Ok(result) => {
+            let mut attempts = Vec::new();
+            for outcome in &result.outcomes {
+                for attempt in &outcome.attempts {
+                    let cost = pricing
+                        .get(&attempt.target)
+                        .map(|p| cost_usd(&attempt.usage, p))
+                        .unwrap_or(0.0);
+                    let won = outcome.winner.as_ref() == Some(&attempt.target);
+                    attempts.push(LiveAttempt {
+                        subtask: outcome.subtask.to_string(),
+                        framework: attempt.target.framework.to_string(),
+                        model: attempt.target.model.to_string(),
+                        tier_rank: attempt.tier_rank,
+                        input_tokens: attempt.usage.input + attempt.usage.cache_read,
+                        output_tokens: attempt.usage.output,
+                        cost_usd: cost,
+                        passed: attempt.verdict.passed,
+                        score: attempt.verdict.score,
+                        won,
+                        response: if won { outcome.response_text.clone() } else { String::new() },
+                    });
+                }
+            }
+            let passed = attempts.iter().filter(|a| a.won && a.passed).count();
+            let note = format!(
+                "{} subtask(s) routed across {} discovered target(s) · {}/{} verified by the advisor",
+                result.outcomes.len(),
+                specs.len(),
+                passed,
+                result.outcomes.len(),
+            );
+            LiveReport {
+                goal: goal.to_string(),
+                repo_label: repo.label.clone(),
+                base_ref: repo.base_ref(),
+                advisor,
+                discovered: specs.len(),
+                subtasks: result.outcomes.len(),
+                attempts,
+                gross_usd: result.spend.gross_usd,
+                saved_usd: result.spend.saved_usd,
+                note,
+            }
+        }
+        Err(e) => LiveReport {
+            goal: goal.to_string(),
+            repo_label: repo.label.clone(),
+            base_ref: repo.base_ref(),
+            advisor,
+            discovered: specs.len(),
+            subtasks: 0,
+            attempts: vec![],
+            gross_usd: 0.0,
+            saved_usd: 0.0,
+            note: format!("Run could not start: {e}"),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::launcher::Adapter;
+
+    #[test]
+    fn run_live_with_no_clis_reports_setup_note() {
+        // In a clean environment no coding CLIs are installed, so live discovery
+        // finds nothing and the engine never runs — the report must say so
+        // honestly rather than fabricate attempts.
+        let bundle = CatalogBundle::seed();
+        let repo = RepoInfo::detect();
+        let report = run_live(
+            &Adapter::available(),
+            "http://localhost:11434",
+            "qwen2.5-coder:7b",
+            &bundle,
+            &repo,
+            "Fix the flaky token-refresh race and add a test",
+        );
+        assert_eq!(report.discovered, 0);
+        assert!(report.attempts.is_empty());
+        assert!(report.note.contains("No models discovered"));
+        // Repo detection produced a real label + base ref.
+        assert!(!report.repo_label.is_empty());
+        assert!(report.advisor.contains("qwen2.5-coder:7b"));
+    }
+
+    #[test]
+    fn repo_detect_finds_this_repository() {
+        let repo = RepoInfo::detect();
+        // We are inside the oryn git repo when tests run.
+        assert!(!repo.label.is_empty());
+        assert!(repo.files.iter().any(|f| f.ends_with(".rs")), "should list rust sources");
+    }
+}

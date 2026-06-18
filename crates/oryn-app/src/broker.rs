@@ -16,17 +16,30 @@ impl Root {
     /// Render the Context Broker view.
     pub(crate) fn broker_view(&self, _cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme();
-        // The cache reduces the no-cache baseline to actual spend; show the gap.
-        let actual = self.mission_spend();
-        let baseline = actual / 0.45; // inverse of the launcher cache factor
-        let saved = (baseline - actual).max(0.0);
+        // Real numbers from the last run + the detected repo. Before any run, the
+        // spend figures are zero and the repo-file count still reflects the real
+        // cache-stable prefix the next run will share.
+        let files = self.repo.files.len();
+        let (gross, saved, frac) = self
+            .report
+            .as_ref()
+            .map(|r| {
+                let frac = if r.gross_usd + r.saved_usd > 0.0 {
+                    r.saved_usd / (r.gross_usd + r.saved_usd) * 100.0
+                } else {
+                    0.0
+                };
+                (r.gross_usd, r.saved_usd, frac)
+            })
+            .unwrap_or((0.0, 0.0, 0.0));
+        let tokens = self.report.as_ref().map(|r| r.total_tokens()).unwrap_or(0);
 
         let stats = div()
             .flex()
             .gap(px(14.0))
-            .child(stat_card(&t, "Artifacts", "1,284", "distinct · post-dedup", t.text.t1))
-            .child(stat_card(&t, "Dedup ratio", "3.6×", "412 MB → 114 MB", t.status.green))
-            .child(stat_card(&t, "Cache savings", &format!("${saved:.2}"), "vs no-cache baseline", t.status.green));
+            .child(stat_card(&t, "Prefix files", &files.to_string(), "shared, content-addressed", t.text.t1))
+            .child(stat_card(&t, "Tokens routed", &crate::mission::fmt_k(tokens), &format!("${gross:.2} gross spend"), t.text.t1))
+            .child(stat_card(&t, "Cache savings", &format!("${saved:.2}"), &format!("{frac:.0}% off the no-cache baseline"), t.status.green));
 
         div()
             .flex_1()
@@ -52,7 +65,7 @@ impl Root {
     }
 }
 
-fn stat_card(t: &Theme, label: &'static str, value: &str, sub: &'static str, value_color: Rgb) -> impl IntoElement {
+fn stat_card(t: &Theme, label: &'static str, value: &str, sub: &str, value_color: Rgb) -> impl IntoElement {
     div()
         .flex_1()
         .flex()
@@ -64,7 +77,7 @@ fn stat_card(t: &Theme, label: &'static str, value: &str, sub: &'static str, val
         .p(px(16.0))
         .child(div().mb(px(10.0)).text_size(px(9.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t5)).child(label))
         .child(div().text_size(px(26.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(value_color)).child(value.to_string()))
-        .child(div().mt(px(4.0)).text_size(px(11.0)).text_color(solid(t.text.t5)).child(sub))
+        .child(div().mt(px(4.0)).text_size(px(11.0)).text_color(solid(t.text.t5)).child(sub.to_string()))
 }
 
 fn explainer(t: &Theme) -> impl IntoElement {

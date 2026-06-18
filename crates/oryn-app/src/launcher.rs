@@ -1,44 +1,41 @@
-//! Launcher view — "Launch a race", fully interactive.
+//! Launcher view — configure and launch a real run.
 //!
-//! Pure data ([`Adapter`], [`Estimate`]) plus render methods on [`crate::Root`].
-//! Adapter rows toggle selection, the estimate recomputes live from the current
-//! selection, and "Launch race" starts a fresh simulation with exactly the
-//! selected frameworks. The adapter list is the UI face of the orchestrator's
-//! `(framework, model)` discovery.
+//! The repository panel reflects the **real** git repo the app was launched in;
+//! the task field is genuinely editable (focus + key handling in `main.rs`); the
+//! agent rows toggle which installed CLIs to route across; and "Launch" fires the
+//! real engine run on a background thread (see [`crate::Root::launch_run`]). The
+//! adapter list is the UI face of the orchestrator's `(framework, model)`
+//! discovery — Oryn lists exactly the models each selected CLI reports.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, FontWeight, ParentElement, Styled, div, px, relative};
+use gpui::{AnyElement, Context, FontWeight, ParentElement, Styled, div, px};
 
 use crate::Root;
 use crate::colors::{overlay, solid, tint};
-use crate::mission::COST_CAP;
 use crate::state::Msg;
 use crate::theme::{Rgb, Theme};
 
-/// Fraction of the worst-case spend expected once the cache-stable prefix is
-/// reused across agents (the design shows ~$7.20 of a $16.00 ceiling).
-const CACHE_SPEND_FACTOR: f64 = 0.45;
-
-/// One agent framework the user can race.
+/// One agent framework the user can route across. `cli` is the binary Oryn runs
+/// for live model discovery and execution.
 #[derive(Debug, Clone)]
 pub struct Adapter {
     pub name: &'static str,
     pub cli: &'static str,
     pub color: Rgb,
     pub enabled: bool,
+    /// Short status/auth hint shown on the row.
     pub tag: &'static str,
 }
 
 impl Adapter {
-    /// Frameworks from the design: four credentialed + selected, two off.
+    /// The frameworks Oryn can drive, mapped to their real CLIs.
     pub fn available() -> Vec<Adapter> {
         vec![
-            Adapter { name: "Claude Code", cli: "claude", color: 0xC08CFF, enabled: true, tag: "opus-4.6" },
-            Adapter { name: "Codex", cli: "codex", color: 0x4ED99A, enabled: true, tag: "gpt-5.2" },
-            Adapter { name: "Gemini CLI", cli: "gemini", color: 0x7FA8FF, enabled: true, tag: "2.5-pro" },
-            Adapter { name: "Amp", cli: "amp", color: 0xFFB454, enabled: true, tag: "sonnet-4.6" },
-            Adapter { name: "Aider", cli: "aider", color: 0x8B8B95, enabled: false, tag: "available" },
-            Adapter { name: "Cursor Agent", cli: "cursor", color: 0x4A4A53, enabled: false, tag: "planned" },
+            Adapter { name: "Claude Code", cli: "claude", color: 0xC08CFF, enabled: true, tag: "subscription" },
+            Adapter { name: "Codex", cli: "codex", color: 0x4ED99A, enabled: true, tag: "subscription" },
+            Adapter { name: "Gemini CLI", cli: "gemini", color: 0x7FA8FF, enabled: true, tag: "keyless" },
+            Adapter { name: "Aider", cli: "aider", color: 0xFFB454, enabled: false, tag: "api key" },
+            Adapter { name: "Cursor Agent", cli: "cursor", color: 0x6AD6E0, enabled: false, tag: "planned" },
         ]
     }
 
@@ -47,23 +44,9 @@ impl Adapter {
     }
 }
 
-/// Cost estimate derived from the selected adapters.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Estimate {
-    pub agents: usize,
-    pub max_spend: f64,
-    pub with_cache: f64,
-}
-
-/// Compute the [`Estimate`] for `adapters`.
-pub fn estimate(adapters: &[Adapter]) -> Estimate {
-    let agents = adapters.iter().filter(|a| a.enabled).count();
-    let max_spend = agents as f64 * COST_CAP;
-    Estimate { agents, max_spend, with_cache: max_spend * CACHE_SPEND_FACTOR }
-}
-
-fn fmt_usd(n: f64) -> String {
-    format!("${n:.2}")
+/// Number of frameworks selected to route across.
+pub fn selected_count(adapters: &[Adapter]) -> usize {
+    adapters.iter().filter(|a| a.enabled).count()
 }
 
 // ── view (methods on Root) ────────────────────────────────────────────────────
@@ -77,7 +60,7 @@ impl Root {
             .flex()
             .flex_col()
             .min_h(px(0.0))
-            .child(crate::view_header(&t, "NEW RUN", "Launch a race"))
+            .child(crate::view_header(&t, "NEW RUN", "Launch a run"))
             .child(
                 div()
                     .flex_1()
@@ -114,32 +97,40 @@ impl Root {
                     .border_1()
                     .border_color(overlay(t.overlays.w09))
                     .rounded(px(9.0))
-                    .child(div().text_size(px(12.5)).text_color(solid(t.text.t1)).child("acme/web-platform"))
+                    .child(div().text_size(px(12.5)).text_color(solid(t.text.t1)).child(self.repo.label.clone()))
                     .child(div().flex_1())
-                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child("main@4f2ab1c")),
+                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(format!("{} · {} files", self.repo.base_ref(), self.repo.files.len()))),
             ))
-            .child(section(
-                t,
-                "TASK",
-                div()
-                    .min_h(px(96.0))
-                    .px(px(14.0))
-                    .py(px(13.0))
-                    .bg(solid(t.surfaces.panel))
-                    .border_1()
-                    .border_color(overlay(t.overlays.w09))
-                    .rounded(px(9.0))
-                    .text_size(px(12.5))
-                    .text_color(solid(t.text.t2))
-                    .child("The token refresh fires twice under concurrent 401s, causing a refresh race. Add a single-flight guard so concurrent refreshes coalesce, and make auth/refresh.test.ts pass."),
-            ))
+            .child(section(t, "TASK", self.task_editor(cx, t)))
             .child(self.agents_section(cx, t))
-            .child(section(t, "PER-AGENT HARD STOP", caps_row(t)))
+            .child(section(t, "VERIFICATION", advisor_row(t, &self.advisor.endpoint, &self.advisor.model)))
             .child(scrub_toggle(self, cx, t))
     }
 
+    /// The editable task field. Clicking focuses it; typing edits `self.task`.
+    fn task_editor(&self, cx: &mut Context<Self>, t: &Theme) -> AnyElement {
+        let mut field = div()
+            .id("task")
+            .min_h(px(96.0))
+            .px(px(14.0))
+            .py(px(13.0))
+            .bg(solid(t.surfaces.panel))
+            .border_1()
+            .border_color(overlay(t.overlays.w09))
+            .rounded(px(9.0))
+            .text_size(px(12.5))
+            .text_color(solid(t.text.t2))
+            .cursor_pointer()
+            .on_click(self.focus_task(cx))
+            .child(format!("{}\u{2588}", self.task));
+        if let Some(fh) = &self.task_focus {
+            field = field.track_focus(fh).on_key_down(self.task_key(cx)).border_color(tint(t.accent.base, 0.34));
+        }
+        field.into_any_element()
+    }
+
     fn agents_section(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
-        let selected = self.adapters.iter().filter(|a| a.enabled).count();
+        let selected = selected_count(&self.adapters);
         let mut rows: Vec<AnyElement> = Vec::new();
         for (row, pair) in self.adapters.chunks(2).enumerate() {
             let mut cells: Vec<AnyElement> = Vec::new();
@@ -157,7 +148,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(section_label(t, "AGENTS TO RACE"))
+                    .child(section_label(t, "FRAMEWORKS TO ROUTE ACROSS"))
                     .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child(format!("{selected} selected · each gets an isolated worktree"))),
             )
             .child(div().flex().flex_col().gap(px(9.0)).children(rows))
@@ -226,7 +217,7 @@ impl Root {
     }
 
     fn estimate_card(&self, cx: &mut Context<Self>, t: &Theme) -> impl IntoElement {
-        let est = estimate(&self.adapters);
+        let selected = selected_count(&self.adapters);
         div()
             .w(px(280.0))
             .flex_none()
@@ -237,11 +228,11 @@ impl Root {
             .border_color(overlay(t.overlays.w09))
             .rounded(px(13.0))
             .p(px(18.0))
-            .child(div().mb(px(16.0)).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child("ESTIMATE"))
-            .child(estimate_row(t, "Agents", est.agents.to_string(), t.text.t1, true))
-            .child(estimate_row(t, "Max spend", fmt_usd(est.max_spend), t.text.t1, true))
-            .child(estimate_row(t, "Est. with cache", fmt_usd(est.with_cache), t.status.green, true))
-            .child(estimate_row(t, "Wall clock cap", "15 min".to_string(), t.text.t1, false))
+            .child(div().mb(px(16.0)).text_size(px(10.0)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t3)).child("PLAN"))
+            .child(estimate_row(t, "Frameworks", selected.to_string(), t.text.t1, true))
+            .child(estimate_row(t, "Repo files", self.repo.files.len().to_string(), t.text.t1, true))
+            .child(estimate_row(t, "Routing", "cheapest-capable first".into(), t.status.green, true))
+            .child(estimate_row(t, "Cost", "measured per run".into(), t.text.t1, false))
             .child(
                 div()
                     .id("launch")
@@ -256,14 +247,36 @@ impl Root {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(solid(0x1A0F2E))
                     .cursor_pointer()
-                    .on_click(self.on(cx, Msg::StartRace))
-                    .child("▸ Launch race"),
+                    .on_click(self.launch_run(cx))
+                    .child("▸ Launch run"),
             )
-            .child(div().mt(px(9.0)).flex().justify_center().text_size(px(10.5)).text_color(solid(t.text.t6)).child("⌘↵ to launch"))
+            .child(div().mt(px(9.0)).flex().justify_center().text_size(px(10.5)).text_color(solid(t.text.t6)).child("routes via the real engine"))
     }
 }
 
 // ── static / shared sub-parts ──────────────────────────────────────────────────
+
+fn advisor_row(t: &Theme, endpoint: &str, model: &str) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(11.0))
+        .px(px(14.0))
+        .py(px(12.0))
+        .bg(solid(t.surfaces.panel))
+        .border_1()
+        .border_color(overlay(t.overlays.w09))
+        .rounded(px(9.0))
+        .child(div().size(px(9.0)).rounded(px(3.0)).bg(solid(t.accent.base)))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w(px(0.0))
+                .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child(format!("Advisor verifies each result · {model}")))
+                .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(endpoint.to_string())),
+        )
+}
 
 fn scrub_toggle(root: &Root, cx: &mut Context<Root>, t: &Theme) -> impl IntoElement {
     div()
@@ -284,44 +297,6 @@ fn scrub_toggle(root: &Root, cx: &mut Context<Root>, t: &Theme) -> impl IntoElem
                 .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).text_color(solid(t.text.t1)).child("Scrub secrets before persist"))
                 .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child("redact tokens & keys from raw payloads")),
         )
-}
-
-fn caps_row(t: &Theme) -> impl IntoElement {
-    div()
-        .flex()
-        .gap(px(12.0))
-        .child(cap_card(t, "Token cap", "300k", 0.6, "kill agent on exceed"))
-        .child(cap_card(t, "USD cap", "$4.00", 0.5, "tracked from cost events"))
-}
-
-fn cap_card(t: &Theme, label: &'static str, value: &'static str, fraction: f32, note: &'static str) -> impl IntoElement {
-    div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .px(px(14.0))
-        .py(px(13.0))
-        .bg(solid(t.surfaces.panel))
-        .border_1()
-        .border_color(overlay(t.overlays.w09))
-        .rounded(px(9.0))
-        .child(
-            div()
-                .flex()
-                .justify_between()
-                .mb(px(9.0))
-                .child(div().text_size(px(11.0)).text_color(solid(t.text.t3)).child(label))
-                .child(div().text_size(px(12.0)).text_color(solid(t.accent.base)).child(value)),
-        )
-        .child(
-            div()
-                .h(px(5.0))
-                .rounded(px(3.0))
-                .bg(overlay(t.overlays.w07))
-                .overflow_hidden()
-                .child(div().h_full().w(relative(fraction)).rounded(px(3.0)).bg(solid(t.accent.base))),
-        )
-        .child(div().mt(px(8.0)).text_size(px(10.0)).text_color(solid(t.text.t6)).child(note))
 }
 
 fn estimate_row(t: &Theme, label: &'static str, value: String, value_color: Rgb, border: bool) -> impl IntoElement {
@@ -349,37 +324,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn available_has_four_enabled() {
+    fn available_frameworks_map_to_clis() {
         let ads = Adapter::available();
-        assert_eq!(ads.len(), 6);
-        assert_eq!(ads.iter().filter(|a| a.enabled).count(), 4);
-    }
-
-    #[test]
-    fn estimate_matches_design_numbers() {
-        let est = estimate(&Adapter::available());
-        assert_eq!(est.agents, 4);
-        assert!((est.max_spend - 16.00).abs() < 1e-9);
-        assert!((est.with_cache - 7.20).abs() < 1e-9);
-    }
-
-    #[test]
-    fn estimate_scales_with_selection() {
-        let e = estimate(&[]);
-        assert_eq!(e.agents, 0);
-        assert_eq!(e.max_spend, 0.0);
-        assert_eq!(e.with_cache, 0.0);
-    }
-
-    #[test]
-    fn cache_estimate_below_max_spend() {
-        let est = estimate(&Adapter::available());
-        assert!(est.with_cache < est.max_spend);
+        assert!(ads.iter().any(|a| a.cli == "claude"));
+        assert!(ads.iter().any(|a| a.cli == "codex"));
+        assert_eq!(selected_count(&ads), 3);
     }
 
     #[test]
     fn planned_is_not_selectable() {
-        let cursor = Adapter { name: "Cursor Agent", cli: "cursor", color: 0, enabled: false, tag: "planned" };
+        let cursor = Adapter::available().into_iter().find(|a| a.tag == "planned").unwrap();
         assert!(!cursor.selectable());
+    }
+
+    #[test]
+    fn selected_count_tracks_enabled() {
+        let mut ads = Adapter::available();
+        for a in &mut ads {
+            a.enabled = false;
+        }
+        assert_eq!(selected_count(&ads), 0);
     }
 }

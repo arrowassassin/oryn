@@ -1,29 +1,30 @@
-//! Review view — compare finished runs and promote a winner.
+//! Review view — compare the real attempts and promote a winner.
 //!
-//! Ranks the race's agents (most progress / passing tests / cheapest first),
-//! marks the top one recommended, lets you select any to inspect, and promotes
-//! the chosen run to merge. Promotion finishes that agent and stops the rest
-//! (see [`Root::promote`]).
+//! Ranks the run's attempts (winners first, then verified, then highest advisor
+//! score, then cheapest), lets you select any to inspect, and promotes the chosen
+//! one (see [`Root::promote`]). Every figure is from the real
+//! [`crate::backend::LiveReport`].
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, FontWeight, ParentElement, Styled, div, px};
 
 use crate::Root;
 use crate::colors::{overlay, solid, tint};
-use crate::mission::{RunStatus, dot, fmt_usd, status_pill};
-use crate::state::Msg;
+use crate::mission::{dot, fmt_k, fmt_usd, status_pill};
+use crate::state::{Msg, RunStatus};
 use crate::theme::Theme;
 
 impl Root {
-    /// Display order: highest progress, then passing tests, then cheapest.
+    /// Display order: winners first, then verified, then highest score, cheapest.
     fn ranking(&self) -> Vec<usize> {
         let mut idx: Vec<usize> = (0..self.agents.len()).collect();
         idx.sort_by(|&a, &b| {
             let x = &self.agents[a];
             let y = &self.agents[b];
-            y.race
-                .total_cmp(&x.race)
-                .then(y.test_ok.cmp(&x.test_ok))
+            y.won
+                .cmp(&x.won)
+                .then((y.status == RunStatus::Passed).cmp(&(x.status == RunStatus::Passed)))
+                .then(y.score.total_cmp(&x.score))
                 .then(x.cost.total_cmp(&y.cost))
         });
         idx
@@ -32,6 +33,24 @@ impl Root {
     /// Render the Review view.
     pub(crate) fn review_view(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme();
+        if self.agents.is_empty() {
+            return div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .min_h(px(0.0))
+                .child(crate::view_header(&t, "REVIEW & PROMOTE", "Compare the field"))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(div().text_size(px(12.5)).text_color(solid(t.text.t4)).child(self.status_summary())),
+                )
+                .into_any_element();
+        }
+
         let order = self.ranking();
         let recommended = order.first().copied();
 
@@ -99,14 +118,14 @@ impl Root {
                             .flex()
                             .items_center()
                             .gap(px(7.0))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(13.0)).text_color(solid(t.text.t1)).child(a.cli))
-                            .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(a.model))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(13.0)).text_color(solid(t.text.t1)).child(a.framework.clone()))
+                            .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(a.model.clone()))
                             .when(recommended, |d| d.child(recommended_chip(t))),
                     )
-                    .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(format!("+{} −{} · {} files · {} turns", a.add, a.del, a.files, a.turns))),
+                    .child(div().text_size(px(10.5)).text_color(solid(t.text.t5)).child(format!("subtask {} · tier {} · {} in / {} out", a.subtask, a.tier_rank, fmt_k(a.input_tokens), fmt_k(a.output_tokens)))),
             )
             .child(div().flex_1())
-            .child(diff_stat(t, "tests", a.tests, if a.test_ok { t.status.green } else { t.status.amber }))
+            .child(diff_stat(t, "score", &format!("{:.2}", a.score), if a.status == RunStatus::Passed { t.status.green } else { t.status.amber }))
             .child(diff_stat(t, "spend", &fmt_usd(a.cost), t.text.t2))
             .child(status_pill(t, a))
             .into_any_element()
@@ -114,8 +133,8 @@ impl Root {
 
     fn promote_bar(&self, cx: &mut Context<Self>, t: &Theme, idx: usize) -> AnyElement {
         let a = &self.agents[idx];
-        let label = format!("Promote {} → merge", a.cli);
-        let already = a.status == RunStatus::Finished && !self.playing;
+        let label = format!("Promote {} → merge", a.framework);
+        let already = self.promoted == Some(idx);
         div()
             .flex()
             .items_center()
@@ -133,7 +152,7 @@ impl Root {
                     .flex_col()
                     .gap(px(2.0))
                     .child(div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(solid(t.text.t1)).child("Recommended winner"))
-                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child("merges the worktree; losing runs are torn down, traces archived")),
+                    .child(div().text_size(px(11.0)).text_color(solid(t.text.t5)).child("promotes this attempt's worktree; losing worktrees are torn down, traces archived")),
             )
             .child(div().flex_1())
             .child(

@@ -19,6 +19,7 @@ pub mod capability;
 pub mod catalog;
 pub mod catalog_store;
 pub mod cost;
+pub mod decompose;
 pub mod discovery;
 pub mod engine;
 pub mod harness;

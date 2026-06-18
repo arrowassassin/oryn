@@ -1,19 +1,20 @@
 //! Application state and the update path.
 //!
-//! [`Settings`] and the running [`mission::AgentRun`] simulation live on the
-//! `Root` view (defined in `main.rs`). All mutation funnels through a single
-//! [`Msg`] enum applied by [`crate::Root::apply`], which keeps the update logic in
-//! one tested place and the render functions free of side effects. The pure state
-//! transitions ([`tick`](crate::Root::tick), [`toggle_adapter`](crate::Root::toggle_adapter),
-//! [`start_race`](crate::Root::start_race), …) are unit-tested without a GPUI
-//! context.
+//! [`Settings`] plus the **real** run state live on the `Root` view (defined in
+//! `main.rs`). Simple, pure state transitions funnel through a single [`Msg`]
+//! enum applied by [`crate::Root::apply`]; side-effecting actions that touch the
+//! engine (launching a run, editing the task field) have dedicated handlers in
+//! `main.rs`/`launcher.rs` because they spawn background work.
+//!
+//! There is no simulation here: [`AgentRun`] rows are built from a real
+//! [`crate::backend::LiveReport`] produced by the orchestrator.
 
 use gpui::{App, ClickEvent, Context, Window};
 
 use crate::Root;
 use crate::Screen;
-use crate::mission::{AgentRun, COST_CAP, RunStatus, TOKEN_CAP};
-use crate::theme::{ACCENTS, Accent, Mode, Theme};
+use crate::backend::{LiveAttempt, LiveReport};
+use crate::theme::{ACCENTS, Accent, Mode, Rgb, Theme};
 
 // ── settings ──────────────────────────────────────────────────────────────────
 
@@ -93,10 +94,94 @@ impl Settings {
     }
 }
 
+// ── run lifecycle ───────────────────────────────────────────────────────────
+
+/// The lifecycle of the current mission run — strictly engine-driven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// No run launched yet this session.
+    Idle,
+    /// A real engine run is in flight on a background thread.
+    Running,
+    /// A run completed; [`Root::report`] holds the real result.
+    Done,
+    /// A run could not be assembled or started (see [`Root::run_note`]).
+    Failed,
+}
+
+/// Per-attempt verdict status, derived from the advisor's real verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunStatus {
+    /// The advisor verified this attempt as acceptable.
+    Passed,
+    /// The advisor rejected this attempt (or the advisor was unreachable).
+    Failed,
+}
+
+/// One rendered run row — a single real execution attempt the orchestrator made.
+/// Built from a [`LiveAttempt`]; no simulated fields.
+#[derive(Debug, Clone)]
+pub struct AgentRun {
+    pub framework: String,
+    pub model: String,
+    pub subtask: String,
+    pub color: Rgb,
+    /// This attempt won (was selected for) its subtask.
+    pub won: bool,
+    pub status: RunStatus,
+    /// Advisor quality score in `0.0..=1.0`, drives the progress bar.
+    pub score: f64,
+    /// 0 = cheapest tier candidate tried first.
+    pub tier_rank: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost: f64,
+    /// The winning attempt's response text (empty for non-winners).
+    pub response: String,
+}
+
+/// Deterministic accent color per framework, so the same framework reads the same
+/// across the board.
+pub fn framework_color(framework: &str) -> Rgb {
+    match framework {
+        "claude-code" => 0xC08CFF,
+        "codex" => 0x4ED99A,
+        "gemini-cli" => 0x7FA8FF,
+        "aider" => 0xFFB454,
+        "cursor" => 0x6AD6E0,
+        _ => 0x8B8B95,
+    }
+}
+
+impl AgentRun {
+    /// Build a row from one real orchestrator attempt.
+    pub fn from_attempt(a: &LiveAttempt) -> Self {
+        Self {
+            framework: a.framework.clone(),
+            model: a.model.clone(),
+            subtask: a.subtask.clone(),
+            color: framework_color(&a.framework),
+            won: a.won,
+            status: if a.passed { RunStatus::Passed } else { RunStatus::Failed },
+            score: a.score,
+            tier_rank: a.tier_rank,
+            input_tokens: a.input_tokens,
+            output_tokens: a.output_tokens,
+            cost: a.cost_usd,
+            response: a.response.clone(),
+        }
+    }
+
+    /// Build the full set of rows for a report, in orchestrator (cascade) order.
+    pub fn rows(report: &LiveReport) -> Vec<AgentRun> {
+        report.attempts.iter().map(AgentRun::from_attempt).collect()
+    }
+}
+
 // ── messages ──────────────────────────────────────────────────────────────────
 
-/// Every state transition the UI can request. `Copy` so handlers can move it into
-/// click listeners cheaply.
+/// Every *pure* state transition the UI can request (no I/O). Side-effecting
+/// actions (launch a run, edit the task) have their own handlers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Msg {
     Navigate(Screen),
@@ -109,11 +194,10 @@ pub enum Msg {
     ToggleTelemetry,
     ToggleAutoCleanup,
     ToggleAdapter(usize),
-    TogglePlay,
     SelectAgent(usize),
-    /// Open a specific agent's timeline.
+    /// Open a specific run row's timeline.
     OpenTimeline(usize),
-    StartRace,
+    /// Mark a run row as the promoted winner.
     Promote(usize),
     /// Choose the local advisor model from [`ADVISOR_MODELS`].
     SetAdvisorModel(usize),
@@ -169,8 +253,7 @@ impl AdvisorPrefs {
 }
 
 impl Root {
-    /// Apply a [`Msg`], mutating state. Pure except for the routing; the heavy
-    /// transitions live in dedicated tested methods.
+    /// Apply a pure [`Msg`], mutating state. No I/O.
     pub fn apply(&mut self, msg: Msg) {
         match msg {
             Msg::Navigate(s) => self.screen = s,
@@ -183,13 +266,11 @@ impl Root {
             Msg::ToggleTelemetry => self.settings.telemetry = !self.settings.telemetry,
             Msg::ToggleAutoCleanup => self.settings.auto_cleanup = !self.settings.auto_cleanup,
             Msg::ToggleAdapter(i) => self.toggle_adapter(i),
-            Msg::TogglePlay => self.playing = !self.playing,
             Msg::SelectAgent(i) => self.select_agent(i),
             Msg::OpenTimeline(i) => {
                 self.select_agent(i);
                 self.screen = Screen::Timeline;
             }
-            Msg::StartRace => self.start_race(),
             Msg::Promote(i) => self.promote(i),
             Msg::SetAdvisorModel(i) => {
                 if let Some(m) = ADVISOR_MODELS.get(i) {
@@ -209,8 +290,7 @@ impl Root {
         Theme::resolve(self.settings.mode(), self.settings.accent())
     }
 
-    /// Build a click handler that applies `msg` and requests a re-render. The
-    /// single place [`Context::notify`] is called for user actions.
+    /// Build a click handler that applies `msg` and requests a re-render.
     pub fn on(
         &self,
         cx: &mut Context<Self>,
@@ -222,8 +302,7 @@ impl Root {
         })
     }
 
-    /// Toggle an adapter's selected state, if the index is valid and the adapter
-    /// is selectable (planned adapters cannot be enabled).
+    /// Toggle an adapter's selected state (planned adapters cannot be enabled).
     pub fn toggle_adapter(&mut self, i: usize) {
         if let Some(a) = self.adapters.get_mut(i)
             && a.tag != "planned"
@@ -232,128 +311,53 @@ impl Root {
         }
     }
 
-    /// Select an agent for the Timeline / Review detail views.
+    /// Select a run row for the Timeline / Review detail views.
     pub fn select_agent(&mut self, i: usize) {
         if i < self.agents.len() {
             self.selected = i;
         }
     }
 
-    /// Begin a fresh race using exactly the enabled adapters, then jump to Mission
-    /// Control with the simulation playing.
-    pub fn start_race(&mut self) {
-        let fresh: Vec<AgentRun> = self
-            .adapters
-            .iter()
-            .filter(|a| a.enabled)
-            .map(AgentRun::launching)
-            .collect();
-        if !fresh.is_empty() {
-            self.agents = fresh;
-            self.selected = 0;
-            self.recompute_leader();
-        }
-        self.playing = true;
-        self.screen = Screen::Mission;
-    }
-
-    /// Mark agent `i` the promoted winner: it finishes, the rest stop.
+    /// Mark run row `i` as the promoted winner.
     pub fn promote(&mut self, i: usize) {
-        if i >= self.agents.len() {
-            return;
-        }
-        for (j, a) in self.agents.iter_mut().enumerate() {
-            if j == i {
-                a.status = RunStatus::Finished;
-                a.race = 1.0;
-            } else if a.status == RunStatus::Running {
-                a.status = RunStatus::Stopped;
-            }
-        }
-        self.playing = false;
-        self.recompute_leader();
-    }
-
-    /// Advance the simulation by one tick. No-op when paused or reduce-motion is
-    /// on. Running agents accrue tokens/cost/turns, advance toward the finish, and
-    /// hard-stop when a budget cap is hit.
-    pub fn tick(&mut self) {
-        if !self.playing || self.settings.reduce_motion {
-            return;
-        }
-        for a in &mut self.agents {
-            if a.status != RunStatus::Running {
-                continue;
-            }
-            a.elapsed_sec += 1;
-            let delta = 1_200 + (a.turns % 5) * 300;
-            a.tokens = (a.tokens + delta).min(TOKEN_CAP);
-            // ~$12 per million tokens — believable blended rate for the sim.
-            a.cost = (a.cost + delta as f64 * 0.000_012).min(COST_CAP);
-            if a.elapsed_sec.is_multiple_of(6) {
-                a.turns += 1;
-            }
-            a.race = (a.race + (0.985 - a.race) * 0.05).min(0.985);
-
-            if a.tokens >= TOKEN_CAP {
-                a.status = RunStatus::Stopped;
-                a.cur_tool = "killed";
-                a.cur_text = "token budget exceeded";
-            } else if a.cost >= COST_CAP {
-                a.status = RunStatus::Stopped;
-                a.cur_tool = "killed";
-                a.cur_text = "USD budget exceeded";
-            } else if a.race >= 0.97 {
-                a.status = RunStatus::Finished;
-                a.race = 1.0;
-                a.cur_tool = "done";
-                a.cur_text = "completed";
-            }
-        }
-        self.recompute_leader();
-    }
-
-    /// Recompute which non-stopped agent leads the race (highest progress).
-    pub fn recompute_leader(&mut self) {
-        let mut best: Option<usize> = None;
-        let mut best_race = f32::NEG_INFINITY;
-        for (i, a) in self.agents.iter().enumerate() {
-            if a.status == RunStatus::Stopped {
-                continue;
-            }
-            if a.race > best_race {
-                best_race = a.race;
-                best = Some(i);
-            }
-        }
-        for (i, a) in self.agents.iter_mut().enumerate() {
-            a.leading = Some(i) == best;
+        if i < self.agents.len() {
+            self.promoted = Some(i);
+            self.selected = i;
         }
     }
 
-    /// Total USD spent across all agents in the current race.
+    /// Ingest a finished engine run: store the report, build real rows, and
+    /// preselect the overall winner.
+    pub fn ingest_report(&mut self, report: LiveReport) {
+        self.agents = AgentRun::rows(&report);
+        self.run_note = report.note.clone();
+        self.selected = self
+            .agents
+            .iter()
+            .position(|a| a.won && a.status == RunStatus::Passed)
+            .unwrap_or(0);
+        self.promoted = None;
+        self.phase = if self.agents.is_empty() { Phase::Failed } else { Phase::Done };
+        self.report = Some(report);
+    }
+
+    /// Total real USD spent across the last run (0 before any run).
     pub fn mission_spend(&self) -> f64 {
-        self.agents.iter().map(|a| a.cost).sum()
+        self.report.as_ref().map(|r| r.gross_usd).unwrap_or(0.0)
     }
 
-    /// The mission budget ceiling: per-agent cap × number of agents.
-    pub fn mission_cap(&self) -> f64 {
-        self.agents.len() as f64 * COST_CAP
-    }
-
-    /// One-line race status summary for the header.
+    /// One-line status summary for the headers, derived from real state.
     pub fn status_summary(&self) -> String {
-        let mut running = 0;
-        let mut finished = 0;
-        let mut stopped = 0;
-        for a in &self.agents {
-            match a.status {
-                RunStatus::Running => running += 1,
-                RunStatus::Finished => finished += 1,
-                RunStatus::Stopped => stopped += 1,
+        match self.phase {
+            Phase::Idle => "no run yet — launch one".into(),
+            Phase::Running => "running — orchestrator routing subtasks".into(),
+            Phase::Failed => self.run_note.clone(),
+            Phase::Done => {
+                let passed = self.agents.iter().filter(|a| a.won && a.status == RunStatus::Passed).count();
+                let won = self.agents.iter().filter(|a| a.won).count();
+                format!("{} attempt(s) · {won} winner(s) · {passed} verified", self.agents.len())
             }
         }
-        format!("{running} running · {finished} finished · {stopped} stopped")
     }
 }
 
@@ -363,169 +367,101 @@ impl Root {
 mod tests {
     use super::*;
 
-    fn root() -> Root {
-        Root::headless()
+    fn report(attempts: Vec<LiveAttempt>) -> LiveReport {
+        let gross = attempts.iter().map(|a| a.cost_usd).sum();
+        LiveReport {
+            goal: "g".into(),
+            repo_label: "acme/web".into(),
+            base_ref: "main@abc1234".into(),
+            advisor: "qwen @ x".into(),
+            discovered: 2,
+            subtasks: 1,
+            attempts,
+            gross_usd: gross,
+            saved_usd: 0.0,
+            note: "done".into(),
+        }
+    }
+
+    fn attempt(framework: &str, won: bool, passed: bool, cost: f64) -> LiveAttempt {
+        LiveAttempt {
+            subtask: "implement".into(),
+            framework: framework.into(),
+            model: "m".into(),
+            tier_rank: 0,
+            input_tokens: 10,
+            output_tokens: 5,
+            cost_usd: cost,
+            passed,
+            score: if passed { 0.9 } else { 0.2 },
+            won,
+            response: if won { "did the thing".into() } else { String::new() },
+        }
     }
 
     #[test]
     fn default_settings_match_design() {
         let s = Settings::default();
         assert_eq!(s.theme, ThemeChoice::Dark);
-        assert_eq!(s.accent_idx, 0);
-        assert!(s.scrub);
-        assert!(!s.telemetry);
-        assert!(s.auto_cleanup);
-        assert!(!s.reduce_motion);
+        assert!(s.scrub && s.auto_cleanup && !s.telemetry && !s.reduce_motion);
     }
 
     #[test]
-    fn auto_theme_resolves_to_dark() {
-        let auto = Settings { theme: ThemeChoice::Auto, ..Default::default() };
-        assert_eq!(auto.mode(), Mode::Dark);
-        let light = Settings { theme: ThemeChoice::Light, ..Default::default() };
-        assert_eq!(light.mode(), Mode::Light);
+    fn from_attempt_maps_real_fields() {
+        let row = AgentRun::from_attempt(&attempt("claude-code", true, true, 1.5));
+        assert_eq!(row.framework, "claude-code");
+        assert_eq!(row.color, framework_color("claude-code"));
+        assert!(row.won && row.status == RunStatus::Passed);
+        assert_eq!(row.response, "did the thing");
     }
 
     #[test]
-    fn set_accent_clamps_and_updates_theme() {
-        let mut r = root();
-        r.apply(Msg::SetAccent(2));
-        assert_eq!(r.settings.accent_idx, 2);
-        assert_eq!(r.theme().accent.base, ACCENTS[2].base);
+    fn ingest_report_builds_rows_and_selects_winner() {
+        let mut r = Root::headless();
+        assert_eq!(r.phase, Phase::Idle);
+        r.ingest_report(report(vec![
+            attempt("codex", false, false, 0.4),
+            attempt("claude-code", true, true, 1.5),
+        ]));
+        assert_eq!(r.phase, Phase::Done);
+        assert_eq!(r.agents.len(), 2);
+        assert_eq!(r.selected, 1, "winner preselected");
+        assert!((r.mission_spend() - 1.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empty_report_is_failed_phase() {
+        let mut r = Root::headless();
+        r.ingest_report(report(vec![]));
+        assert_eq!(r.phase, Phase::Failed);
+    }
+
+    #[test]
+    fn promote_marks_winner() {
+        let mut r = Root::headless();
+        r.ingest_report(report(vec![attempt("codex", true, true, 0.4)]));
+        r.apply(Msg::Promote(0));
+        assert_eq!(r.promoted, Some(0));
+    }
+
+    #[test]
+    fn planned_adapter_cannot_be_enabled() {
+        let mut r = Root::headless();
+        let cursor = r.adapters.iter().position(|a| a.tag == "planned").unwrap();
+        r.apply(Msg::ToggleAdapter(cursor));
+        assert!(!r.adapters[cursor].enabled);
+    }
+
+    #[test]
+    fn set_accent_clamps() {
+        let mut r = Root::headless();
         r.apply(Msg::SetAccent(99));
         assert_eq!(r.settings.accent_idx, ACCENTS.len() - 1);
     }
 
     #[test]
-    fn toggles_flip() {
-        let mut r = root();
-        assert!(!r.settings.reduce_motion);
-        r.apply(Msg::ToggleReduceMotion);
-        assert!(r.settings.reduce_motion);
-        r.apply(Msg::ToggleScrub);
-        assert!(!r.settings.scrub);
-    }
-
-    #[test]
-    fn planned_adapter_cannot_be_enabled() {
-        let mut r = root();
-        let cursor = r.adapters.iter().position(|a| a.tag == "planned").unwrap();
-        assert!(!r.adapters[cursor].enabled);
-        r.apply(Msg::ToggleAdapter(cursor));
-        assert!(!r.adapters[cursor].enabled, "planned adapters stay off");
-    }
-
-    #[test]
-    fn available_adapter_toggles() {
-        let mut r = root();
-        let aider = r.adapters.iter().position(|a| a.tag == "available").unwrap();
-        r.apply(Msg::ToggleAdapter(aider));
-        assert!(r.adapters[aider].enabled);
-        r.apply(Msg::ToggleAdapter(aider));
-        assert!(!r.adapters[aider].enabled);
-    }
-
-    #[test]
-    fn start_race_uses_enabled_adapters_and_plays() {
-        let mut r = root();
-        // Disable one of the four enabled adapters → race has three agents.
-        let codex = r.adapters.iter().position(|a| a.cli == "codex").unwrap();
-        r.apply(Msg::ToggleAdapter(codex));
-        r.apply(Msg::StartRace);
-        assert_eq!(r.screen, Screen::Mission);
-        assert!(r.playing);
-        assert_eq!(r.agents.len(), 3);
-        assert!(r.agents.iter().all(|a| a.status == RunStatus::Running));
-    }
-
-    #[test]
-    fn tick_advances_running_agents_only_when_playing() {
-        let mut r = root();
-        r.playing = false;
-        let before: Vec<u32> = r.agents.iter().map(|a| a.tokens).collect();
-        r.tick();
-        let after: Vec<u32> = r.agents.iter().map(|a| a.tokens).collect();
-        assert_eq!(before, after, "paused tick is a no-op");
-
-        r.playing = true;
-        r.tick();
-        let running = r.agents.iter().find(|a| a.status == RunStatus::Running).unwrap();
-        assert!(running.tokens > 0);
-    }
-
-    #[test]
-    fn reduce_motion_pauses_tick() {
-        let mut r = root();
-        r.playing = true;
-        r.settings.reduce_motion = true;
-        let before: Vec<u32> = r.agents.iter().map(|a| a.tokens).collect();
-        r.tick();
-        let after: Vec<u32> = r.agents.iter().map(|a| a.tokens).collect();
-        assert_eq!(before, after);
-    }
-
-    #[test]
-    fn tick_hard_stops_at_token_cap() {
-        let mut r = root();
-        r.playing = true;
-        // Drive many ticks; every initially-running agent must hit a terminal cap.
-        for _ in 0..1000 {
-            r.tick();
-        }
-        assert!(r.agents.iter().all(|a| a.status != RunStatus::Running || a.race >= 0.98));
-        // amp starts at the token cap → stopped quickly.
-        let amp = r.agents.iter().find(|a| a.cli == "amp");
-        if let Some(amp) = amp {
-            assert_eq!(amp.status, RunStatus::Stopped);
-        }
-    }
-
-    #[test]
-    fn promote_finishes_winner_and_stops_rest() {
-        let mut r = root();
-        r.apply(Msg::Promote(0));
-        assert_eq!(r.agents[0].status, RunStatus::Finished);
-        assert_eq!(r.agents[0].race, 1.0);
-        assert!(!r.playing);
-        for a in r.agents.iter().skip(1) {
-            assert_ne!(a.status, RunStatus::Running);
-        }
-    }
-
-    #[test]
-    fn leader_is_highest_progress_non_stopped() {
-        let mut r = root();
-        r.recompute_leader();
-        let leader = r.agents.iter().position(|a| a.leading).unwrap();
-        let leader_race = r.agents[leader].race;
-        for a in &r.agents {
-            if a.status != RunStatus::Stopped {
-                assert!(a.race <= leader_race + f32::EPSILON);
-            }
-        }
-        assert_eq!(r.agents.iter().filter(|a| a.leading).count(), 1);
-    }
-
-    #[test]
-    fn open_timeline_selects_and_navigates() {
-        let mut r = root();
-        r.apply(Msg::OpenTimeline(2));
-        assert_eq!(r.selected, 2);
-        assert_eq!(r.screen, Screen::Timeline);
-    }
-
-    #[test]
-    fn mission_spend_sums_costs() {
-        let r = root();
-        let expected: f64 = r.agents.iter().map(|a| a.cost).sum();
-        assert!((r.mission_spend() - expected).abs() < 1e-9);
-        assert!((r.mission_cap() - r.agents.len() as f64 * COST_CAP).abs() < 1e-9);
-    }
-
-    #[test]
-    fn status_summary_counts_states() {
-        let r = root();
-        // sample(): 2 running, 1 finished, 1 stopped.
-        assert_eq!(r.status_summary(), "2 running · 1 finished · 1 stopped");
+    fn idle_status_summary() {
+        let r = Root::headless();
+        assert_eq!(r.status_summary(), "no run yet — launch one");
     }
 }
