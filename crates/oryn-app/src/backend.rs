@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oryn_core::orchestrator::advisor::{Http, HttpError, LocalAdvisor, OllamaAdvisor};
+use oryn_core::orchestrator::artificial_analysis::{aa_weights, parse_aa};
 use oryn_core::orchestrator::catalog::{
     CapabilityCatalog, CapabilitySource, CatalogProvenance, RawBenchmarks, SourceError,
     default_weights, parse_scored_list,
@@ -149,6 +150,62 @@ impl CapabilitySource for HttpBenchmarkSource {
     }
 }
 
+/// HTTP GET with an optional `x-api-key` header.
+fn http_get_key(url: &str, key: Option<&str>) -> Result<String, SourceError> {
+    let mut req = ureq::get(url);
+    if let Some(k) = key {
+        req = req.set("x-api-key", k);
+    }
+    match req.call() {
+        Ok(resp) => resp.into_string().map_err(|e| SourceError::Malformed(e.to_string())),
+        Err(_) => Err(SourceError::Unavailable),
+    }
+}
+
+/// Artificial Analysis — the **primary** source: one API for both pricing *and*
+/// benchmarks. Requires an API key (`ARTIFICIALANALYSIS_API_KEY`). The same struct
+/// serves as both a [`PricingSource`] and a [`CapabilitySource`] (two fetches of
+/// the same endpoint on a refresh, which is daily).
+pub struct ArtificialAnalysis {
+    url: String,
+    key: String,
+}
+
+impl ArtificialAnalysis {
+    /// Configured from `ARTIFICIALANALYSIS_API_KEY` (+ optional `ORYN_AA_URL`).
+    /// Returns `None` when no key is set.
+    pub fn from_env() -> Option<Self> {
+        let key = std::env::var("ARTIFICIALANALYSIS_API_KEY").ok().filter(|s| !s.is_empty())?;
+        let url = std::env::var("ORYN_AA_URL")
+            .unwrap_or_else(|_| "https://artificialanalysis.ai/api/v2/data/llms/models".into());
+        Some(Self { url, key })
+    }
+}
+
+impl PricingSource for ArtificialAnalysis {
+    fn id(&self) -> &str {
+        "artificial-analysis"
+    }
+    fn fetch(&self, now_unix: u64) -> Result<PricingTable, SourceError> {
+        let body = http_get_key(&self.url, Some(&self.key))?;
+        let aa = parse_aa(&body)?;
+        Ok(PricingTable {
+            prices: aa.prices,
+            provenance: CatalogProvenance { source: "artificial-analysis".into(), fetched_at_unix: now_unix, version: "v2".into() },
+        })
+    }
+}
+
+impl CapabilitySource for ArtificialAnalysis {
+    fn id(&self) -> &str {
+        "artificial-analysis"
+    }
+    fn fetch(&self) -> Result<RawBenchmarks, SourceError> {
+        let body = http_get_key(&self.url, Some(&self.key))?;
+        Ok(parse_aa(&body)?.benchmarks)
+    }
+}
+
 /// How often (seconds) to consider the parked catalog stale (`ORYN_REFRESH_SECS`,
 /// default 24h).
 fn refresh_policy() -> RefreshPolicy {
@@ -156,15 +213,28 @@ fn refresh_policy() -> RefreshPolicy {
     RefreshPolicy::new(secs)
 }
 
-/// Load the parked catalog and refresh it from the live sources if it is stale,
+/// Load the parked catalog and refresh it from the live sources if stale,
 /// re-parking the result. Offline-safe: keeps parked/seed data when a source is
-/// down. This is the "check and refresh for the model you're loading, keep it
-/// parked" entrypoint — safe to call on a background thread.
+/// down.
+///
+/// **Source precedence:** Artificial Analysis (pricing + benchmarks in one) when an
+/// API key is configured; otherwise OpenRouter for pricing plus an optional
+/// benchmark URL for capability. This is the "check and refresh for the model
+/// you're loading, keep it parked" entrypoint — safe on a background thread.
 pub fn load_catalog() -> CatalogBundle {
     let store = FsStore::from_env();
-    let benchmark = HttpBenchmarkSource::from_env();
-    let pricing = OpenRouterPricing::from_env();
-    load_and_maybe_refresh(&store, refresh_policy(), &benchmark, &default_weights(), &pricing, now_unix())
+    let policy = refresh_policy();
+    let now = now_unix();
+    match ArtificialAnalysis::from_env() {
+        // Preferred: one source for both pricing and benchmarks.
+        Some(aa) => load_and_maybe_refresh(&store, policy, &aa, &aa_weights(), &aa, now),
+        // Fallback: OpenRouter pricing + optional benchmark leaderboard.
+        None => {
+            let benchmark = HttpBenchmarkSource::from_env();
+            let pricing = OpenRouterPricing::from_env();
+            load_and_maybe_refresh(&store, policy, &benchmark, &default_weights(), &pricing, now)
+        }
+    }
 }
 
 // ── engine wiring ─────────────────────────────────────────────────────────────

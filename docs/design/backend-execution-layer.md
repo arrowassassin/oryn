@@ -204,10 +204,16 @@ All run at temperature 0 with a fixed seed ([`ADVISOR_SEED`]) for reproducibilit
 
 Routing cost and capability are **data sourced live and pinned**, not nominal:
 
-- `oryn-core::orchestrator::pricing` — `PricingTable` + `parse_openrouter_models`
-  (real `/api/v1/models` shape → USD-per-million) + `PricingSource` trait + seed.
-- `oryn-core::orchestrator::catalog::parse_scored_list` — pure parser for real
-  leaderboard JSON into capability scores.
+- `oryn-core::orchestrator::artificial_analysis` — the **primary** source:
+  `parse_aa` reads Artificial Analysis `/api/v2/data/llms/models`, which carries
+  **both** per-model pricing (USD/M) *and* benchmark indices (coding /
+  intelligence); `aa_weights` maps those indices onto the sub-task kinds. One API
+  for the two signals routing needs.
+- `oryn-core::orchestrator::pricing` — fallback pricing: `PricingTable` +
+  `parse_openrouter_models` (OpenRouter `/api/v1/models` → USD-per-million, pricing
+  only) + `PricingSource` trait + seed.
+- `oryn-core::orchestrator::catalog::parse_scored_list` — pure parser for a generic
+  leaderboard JSON into capability scores (fallback benchmark source).
 - `oryn-core::orchestrator::catalog_store` — `CatalogBundle` (capability +
   pricing) parked via a `Store`; `RefreshPolicy`/`is_stale`; `refresh_or_keep`
   (offline-safe — keeps parked data when a source is down); `load_and_maybe_refresh`

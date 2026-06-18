@@ -14,6 +14,7 @@
 //! selection, budget enforcement, and result aggregation.
 
 pub mod advisor;
+pub mod artificial_analysis;
 pub mod capability;
 pub mod catalog;
 pub mod catalog_store;
