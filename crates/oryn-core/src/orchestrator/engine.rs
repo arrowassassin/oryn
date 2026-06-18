@@ -169,7 +169,26 @@ impl Engine {
         available: &[ModelSpec],
         prefix: &CacheStablePrefix,
     ) -> Result<MissionResult, EngineError> {
-        let matrix = resolve_matrix(available, &self.catalog.profiles);
+        self.run_mission_with(mission, available, &self.catalog.profiles, prefix)
+    }
+
+    /// Like [`run_mission`](Self::run_mission) but with an explicit capability
+    /// `profiles` map — used when models are **discovered dynamically** and keyed
+    /// by ids that differ from the bundled catalog (see
+    /// [`listing::build_targets`](crate::orchestrator::listing::build_targets)).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Orchestrator`] on a dependency cycle or a sub-task with no
+    /// attemptable target.
+    pub fn run_mission_with(
+        &self,
+        mission: &Mission,
+        available: &[ModelSpec],
+        profiles: &std::collections::BTreeMap<crate::orchestrator::provider::ModelId, crate::orchestrator::capability::CapabilityProfile>,
+        prefix: &CacheStablePrefix,
+    ) -> Result<MissionResult, EngineError> {
+        let matrix = resolve_matrix(available, profiles);
         let registry = self.build_registry(available);
         let verifier = self.verifier();
         Ok(Orchestrator::run(mission, &registry, &matrix, prefix, &verifier)?)

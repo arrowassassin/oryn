@@ -21,6 +21,7 @@ pub mod cost;
 pub mod discovery;
 pub mod engine;
 pub mod harness;
+pub mod listing;
 pub mod prefix;
 pub mod pricing;
 pub mod provider;
