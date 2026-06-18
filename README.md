@@ -26,16 +26,30 @@ This repo is a Rust workspace:
    target, so providers serve it from their prompt cache and only the volatile
    per-subtask suffix is re-billed.
 4. **Cascade** — the scheduler climbs each subtask's capability tier
-   cheapest-first, runs the harness CLI in an isolated git worktree, and gates the
-   result through the local **advisor** (an OpenAI-compatible endpoint such as
-   Ollama). The cascade stops at the first attempt the advisor verifies.
-5. **Report** — the UI renders the real `MissionResult`: which `(framework, model)`
-   won each subtask, the tokens each provider reported, the cost computed from live
-   pricing, the advisor's verdict, the model's actual output, and the run's total
-   spend and cache savings.
+   cheapest-first, creating a **real isolated git worktree** per target and running
+   the harness CLI there. Progress streams live (`subtask N/M`).
+5. **Verify by execution** — each result is gated by running the project's test
+   command *in that target's worktree* and checking the exit code (auto-detected:
+   Cargo/Go/npm/pytest, override with `ORYN_TEST_CMD`); the local **advisor**
+   (an OpenAI-compatible endpoint such as Ollama) is the fallback when there's no
+   test runner. The cascade stops at the first attempt that genuinely passes.
+6. **Report & promote** — the UI renders the real `MissionResult`: which
+   `(framework, model)` won each subtask, reported tokens, cost from live pricing,
+   the verdict, the actual diff (`+`/`−` lines), and total spend. Promoting a
+   winner applies its worktree's changes onto your repo and tears down the losers.
 
 When no coding CLI is installed, discovery honestly returns zero targets and the
 app says so — it never invents results.
+
+## More
+
+- **Command palette** (top-bar search / ⌘K) — fuzzy command search, keyboard-driven.
+- **Cancel** an in-flight run; **persisted** preferences across launches.
+- **Context Broker** — a real content-addressed artifact store; the shared
+  cache-stable prefix is stored once across targets (real dedup numbers).
+- **CLI detection** — Launch shows which coding CLIs are actually installed.
+- **CI** — `.github/workflows/ci.yml` enforces fmt, clippy (`-D warnings`),
+  build, and tests on every push/PR.
 
 ## Run it
 
