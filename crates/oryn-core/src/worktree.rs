@@ -129,6 +129,17 @@ impl WorktreeDiff {
     }
 }
 
+/// Copy `rel` from `src_root` into `dst_root`, creating parent directories.
+fn copy_into(src_root: &Path, dst_root: &Path, rel: &str) -> Result<()> {
+    let src = src_root.join(rel);
+    let dst = dst_root.join(rel);
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&src, &dst)?;
+    Ok(())
+}
+
 /// Validate a session id used in filesystem paths and git ref names. Strict
 /// allowlist: rejects `/`, `\`, `.`, NUL, whitespace, and anything that could
 /// escape the worktree base or inject into a ref.
@@ -252,6 +263,42 @@ impl WorktreeManager {
             true
         })?;
         Ok(buf)
+    }
+
+    /// Promote a session's worktree by applying its changes onto the main repo's
+    /// working tree: added/modified/renamed files are copied in, deleted files are
+    /// removed, and a rename's old path is deleted. Returns the affected repo-
+    /// relative paths. This is how a chosen winner's edits land in the user's repo.
+    ///
+    /// Operates on the working tree only (it never commits), mirroring how the
+    /// agent's own changes are uncommitted in the worktree.
+    pub fn promote(&self, session_id: &str) -> Result<Vec<String>> {
+        validate_session_id(session_id)?;
+        let worktree_path = self.worktree_base.join(session_id);
+        let diff = self.diff(&worktree_path)?;
+        let mut applied = Vec::new();
+        for file in &diff.files {
+            match file.status {
+                FileStatus::Deleted => {
+                    let dst = self.repo_path.join(&file.path);
+                    if dst.exists() {
+                        std::fs::remove_file(&dst)?;
+                    }
+                }
+                FileStatus::Renamed => {
+                    if let Some(old) = &file.old_path {
+                        let old_dst = self.repo_path.join(old);
+                        if old_dst.exists() {
+                            std::fs::remove_file(&old_dst)?;
+                        }
+                    }
+                    copy_into(&worktree_path, &self.repo_path, &file.path)?;
+                }
+                _ => copy_into(&worktree_path, &self.repo_path, &file.path)?,
+            }
+            applied.push(file.path.clone());
+        }
+        Ok(applied)
     }
 
     /// Tear down the session's worktree: prune its git registration and remove
@@ -429,6 +476,33 @@ mod tests {
         assert!(
             index.get_path(Path::new("staged.txt"), 0).is_some(),
             "agent's staged file must still be in the index"
+        );
+    }
+
+    #[test]
+    fn promote_applies_worktree_changes_to_main_repo() {
+        let fx = fixture();
+        let wt = fx.mgr.create("sess_promo").unwrap();
+        // Agent edits an existing file, adds a new one (in a subdir), deletes one.
+        fs::write(wt.join("README.md"), "seed\npromoted\n").unwrap();
+        fs::create_dir_all(wt.join("src")).unwrap();
+        fs::write(wt.join("src").join("new.rs"), "fn main() {}\n").unwrap();
+        fs::remove_file(wt.join(".gitignore")).unwrap();
+
+        let applied = fx.mgr.promote("sess_promo").unwrap();
+        assert!(applied.iter().any(|p| p == "README.md"));
+        assert!(applied.iter().any(|p| p == "src/new.rs"));
+
+        // The changes are now in the main repo working tree.
+        let repo_root = fx._repo.path();
+        assert_eq!(
+            fs::read_to_string(repo_root.join("README.md")).unwrap(),
+            "seed\npromoted\n"
+        );
+        assert!(repo_root.join("src").join("new.rs").exists());
+        assert!(
+            !repo_root.join(".gitignore").exists(),
+            "deleted file removed from repo"
         );
     }
 

@@ -30,6 +30,8 @@ use oryn_core::orchestrator::runner::{ProcessRunner, SystemProcessRunner};
 use oryn_core::orchestrator::task::{Subtask, SubtaskId, SubtaskKind};
 use std::collections::BTreeMap;
 
+use oryn_core::worktree::WorktreeManager;
+
 use crate::launcher::Adapter;
 use crate::state::{CatalogSource, PersistedConfig};
 
@@ -367,6 +369,37 @@ pub fn detect_test_command(repo_root: &std::path::Path) -> Option<Vec<String>> {
     } else {
         None
     }
+}
+
+/// Promote the winner: apply its worktree's changes onto the repo working tree,
+/// then (optionally) tear down the losing worktrees. Blocking — run on a
+/// background thread.
+pub fn promote_winner(
+    repo_root: &std::path::Path,
+    winner_session: &str,
+    loser_sessions: &[String],
+    cleanup: bool,
+) -> Result<String, String> {
+    let mgr = WorktreeManager::new(repo_root, worktree_base());
+    let applied = mgr.promote(winner_session).map_err(|e| e.to_string())?;
+    let mut removed = 0;
+    if cleanup {
+        for s in loser_sessions {
+            if mgr.remove(s).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    Ok(format!(
+        "promoted {} file change(s) into {}{}",
+        applied.len(),
+        repo_root.display(),
+        if cleanup {
+            format!(" · tore down {removed} worktree(s)")
+        } else {
+            String::new()
+        },
+    ))
 }
 
 /// The worktree base directory, from `ORYN_WORKTREE_BASE` or a default.
@@ -776,6 +809,8 @@ pub struct LiveAttempt {
     /// Lines added / removed in the worktree diff (winners only).
     pub added: usize,
     pub removed: usize,
+    /// The worktree session id for this target (used to promote/clean up).
+    pub worktree_session: String,
 }
 
 /// The full, real result of running a mission through the engine — what the UI
@@ -897,6 +932,7 @@ pub fn run_live(
                         files_changed,
                         added,
                         removed,
+                        worktree_session: Engine::session_id(&attempt.target),
                     });
                 }
             }

@@ -236,6 +236,55 @@ impl Root {
         })
     }
 
+    /// Promote run row `idx`: mark it the winner, then apply its worktree's
+    /// changes onto the repo working tree (and tear down the losing worktrees when
+    /// auto-cleanup is on) on a background thread.
+    pub fn promote_run(
+        &self,
+        cx: &mut Context<Self>,
+        idx: usize,
+    ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
+        cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+            if idx >= this.agents.len() {
+                return;
+            }
+            this.promoted = Some(idx);
+            this.selected = idx;
+            let winner = this.agents[idx].worktree_session.clone();
+            if winner.is_empty() {
+                cx.notify();
+                return;
+            }
+            let losers: Vec<String> = this
+                .agents
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != idx)
+                .map(|(_, a)| a.worktree_session.clone())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let repo = this.repo.root.clone();
+            let cleanup = this.settings.auto_cleanup;
+            this.run_note = "promoting…".into();
+            cx.notify();
+
+            let handle = cx.spawn(async move |weak, cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { backend::promote_winner(&repo, &winner, &losers, cleanup) })
+                    .await;
+                let _ = weak.update(cx, |this, cx| {
+                    this.run_note = match result {
+                        Ok(msg) => msg,
+                        Err(e) => format!("promote failed: {e}"),
+                    };
+                    cx.notify();
+                });
+            });
+            this._run = Some(handle);
+        })
+    }
+
     // ── task editing (pure, cursor-aware, unit-tested) ──────────────────────
 
     /// Clamp the caret to a valid char boundary within `task`.

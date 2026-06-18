@@ -448,7 +448,7 @@ impl Root {
             .text_size(px(11.5))
             .font_weight(FontWeight::SEMIBOLD)
             .cursor_pointer()
-            .on_click(self.on(cx, Msg::Promote(idx)))
+            .on_click(self.promote_run(cx, idx))
             .map(|d| {
                 if promoted {
                     d.bg(solid(t.status.green))
@@ -813,6 +813,7 @@ mod tests {
             files_changed: 0,
             added: 0,
             removed: 0,
+            worktree_session: "oryn-codex-m".into(),
         };
         assert_eq!(status_label(&base), "Verified winner");
         assert_eq!(

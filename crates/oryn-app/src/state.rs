@@ -143,6 +143,8 @@ pub struct AgentRun {
     pub files_changed: usize,
     pub added: usize,
     pub removed: usize,
+    /// The worktree session id (used to promote/clean up this attempt).
+    pub worktree_session: String,
 }
 
 /// Deterministic accent color per framework, so the same framework reads the same
@@ -181,6 +183,7 @@ impl AgentRun {
             files_changed: a.files_changed,
             added: a.added,
             removed: a.removed,
+            worktree_session: a.worktree_session.clone(),
         }
     }
 
@@ -488,6 +491,7 @@ mod tests {
             files_changed: if won { 2 } else { 0 },
             added: if won { 10 } else { 0 },
             removed: if won { 3 } else { 0 },
+            worktree_session: format!("oryn-{framework}-m"),
         }
     }
 

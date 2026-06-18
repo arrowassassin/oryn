@@ -221,7 +221,7 @@ impl Root {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(solid(0x1A0F2E))
                     .cursor_pointer()
-                    .on_click(self.on(cx, Msg::Promote(idx)))
+                    .on_click(self.promote_run(cx, idx))
                     .child(if already { "Promoted ✓".to_string() } else { label }),
             )
             .into_any_element()
