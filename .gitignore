@@ -1,0 +1,10 @@
+/target
+/.oryn
+/.claude/worktrees
+*.profraw
+/lcov.info
+
+# design handoff binaries (keep the .dc.html source, drop heavy assets)
+design/**/*.zip
+design/**/screenshots/
+design/**/.thumbnail
