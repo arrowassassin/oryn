@@ -1,15 +1,48 @@
 [workspace]
 resolver = "3"
-members = ["crates/oryn-core", "crates/oryn-app"]
+members = [
+    "crates/oryn-core",
+    "crates/oryn-cuda",
+    "crates/oryn-server",
+    "crates/oryn-cli",
+]
 
 [workspace.package]
-edition = "2024"
+edition = "2021"
 version = "0.1.0"
 license = "MIT"
 repository = "https://github.com/arrowassassin/oryn"
+rust-version = "1.96"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+[workspace.dependencies]
+oryn-core = { path = "crates/oryn-core" }
+oryn-cuda = { path = "crates/oryn-cuda" }
+oryn-server = { path = "crates/oryn-server" }
+
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0"
+anyhow = "1.0"
+blake3 = "1.5"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = "0.8"
+rand_chacha = "0.3"
+ahash = "0.8"
+rayon = "1.10"
+hex = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

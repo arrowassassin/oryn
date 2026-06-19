@@ -1,22 +1,25 @@
 [package]
 name = "oryn-core"
-description = "Headless engine for Oryn — local-first mission control for AI coding agents"
+description = "Oryn — deterministic reproducibility & evaluation-integrity engine for AI (contamination scanning, statistically-rigorous evals, determinism analysis, signed attestations). No model in the loop."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-git2 = "0.21.0"
-hex = "0.4.3"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
-sha2 = "0.11.0"
-thiserror = "2.0.18"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+ahash.workspace = true
+rayon.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
-tempfile = "3.27.0"
-ureq = "2.12"

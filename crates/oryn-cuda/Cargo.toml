@@ -1,0 +1,26 @@
+[package]
+name = "oryn-cuda"
+description = "Batch-invariant numerical kernels for reproducible inference — real CUDA kernels (compiled when nvcc is present) with a tested CPU reference path."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+# This crate intentionally needs `unsafe` for CUDA FFI (only under the `cuda`
+# feature). It opts out of the workspace `unsafe_code = "forbid"` lint and keeps
+# unsafe confined to the FFI module.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+
+[features]
+# Build and link the real CUDA kernels. Requires `nvcc` on PATH; if absent the
+# build prints a warning and falls back to the CPU reference implementation.
+cuda = []
+
+[dependencies]
+serde.workspace = true

@@ -1,72 +1,110 @@
-# oryn
+# Oryn
 
-**A local-first, vendor-neutral control plane for AI coding agents.** Oryn
-discovers the models each coding CLI you have installed actually exposes, decomposes
-a task into typed subtasks, and runs the deterministic **route, don't race**
-cascade — sending each subtask to the cheapest-capable `(framework, model)` target
-first and escalating only when a local advisor model rejects the result.
+**The reproducibility & evaluation-integrity layer for AI — a non-AI tool that
+makes AI results you can reproduce, trust, and audit.**
 
-This repo is a Rust workspace:
+There is **no model in the loop anywhere in Oryn**. It is classical computer
+science — n-gram/MinHash matching, statistics, floating-point numerics, BLAKE3 +
+Ed25519 — applied to the one question every AI generator dodges: *is this result
+real, or is it noise, nondeterminism, or benchmark contamination?*
+
+Three structural problems Oryn answers deterministically:
+
+1. **Evals don't replicate.** The same model on the same benchmark is reported
+   with wildly different scores; most evals ship with no error bars at all.
+   Oryn attaches confidence intervals, statistical power, and a paired
+   **regression gate**.
+2. **Benchmarks are contaminated.** Test items leak into training corpora and
+   inflate scores. Oryn scans for verbatim (n-gram) and near-duplicate
+   (MinHash/LSH) contamination and emits a **clean held-out split**.
+3. **Inference isn't deterministic.** At temperature 0, batch size / tiling
+   changes the floating-point reduction order and flips tokens. Oryn analyzes
+   repeated generations and ships **batch-invariant kernels** (real CUDA, with a
+   tested CPU reference) that make the reduction order — and the output —
+   reproducible.
+
+Every report can be sealed into a tamper-evident, **Ed25519-signed hash chain**
+for audit (EU AI Act Art. 12/19 record-keeping).
+
+## Workspace
 
 | Crate | What it is |
 |-------|------------|
-| [`oryn-core`](crates/oryn-core) | The headless engine: typed mission model, deterministic decomposition, capability matrix, the cascade scheduler, cost accounting, the cache-stable prefix, live model discovery, and the catalog store. Network-, process- and clock-free — all I/O is injected. |
-| [`oryn-app`](crates/oryn-app) | A [GPUI](https://www.gpui.rs) desktop frontend. Launching a run drives the **real** engine on a background thread and renders the real result — no simulation. |
+| [`oryn-core`](crates/oryn-core) | The engine: contamination scanning, statistically-rigorous evals + regression gate, determinism analysis, signed attestations, and the aggregate integrity report. Deterministic; no I/O hidden inside. |
+| [`oryn-cuda`](crates/oryn-cuda) | Batch-invariant numerical kernels. Real CUDA (`kernels/batch_invariant.cu`) compiled and linked when the `cuda` feature is set and `nvcc` is present; otherwise a **tested CPU reference** with identical semantics. |
+| [`oryn-server`](crates/oryn-server) | A UI-agnostic JSON HTTP API over the engine (axum), so any frontend can drive it. |
+| [`oryn-cli`](crates/oryn-cli) | The `oryn` command line: `scan`, `eval`, `gate`, `determinism`, `keygen`, `attest`, `serve`, `info`. |
 
-## How a run works (the real path)
+## Quick start
 
-1. **Discover** — for each selected framework (`claude`, `codex`, `gemini`,
-   `aider`, …) Oryn runs the CLI's own list command via a real subprocess and
-   parses exactly the models it reports. No hardcoded model names.
-2. **Decompose** — the free-text task becomes a typed `Mission` of `Subtask`s with
-   dependency edges ([`decompose`](crates/oryn-core/src/orchestrator/decompose.rs)),
-   deterministically, so a run is reproducible.
-3. **Share context** — one byte-identical, content-addressed **cache-stable
-   prefix** (system + repo map + task) is built once and reused across every
-   target, so providers serve it from their prompt cache and only the volatile
-   per-subtask suffix is re-billed.
-4. **Cascade** — the scheduler climbs each subtask's capability tier
-   cheapest-first, creating a **real isolated git worktree** per target and running
-   the harness CLI there. Progress streams live (`subtask N/M`).
-5. **Verify by execution** — each result is gated by running the project's test
-   command *in that target's worktree* and checking the exit code (auto-detected:
-   Cargo/Go/npm/pytest, override with `ORYN_TEST_CMD`); the local **advisor**
-   (an OpenAI-compatible endpoint such as Ollama) is the fallback when there's no
-   test runner. The cascade stops at the first attempt that genuinely passes.
-6. **Report & promote** — the UI renders the real `MissionResult`: which
-   `(framework, model)` won each subtask, reported tokens, cost from live pricing,
-   the verdict, the actual diff (`+`/`−` lines), and total spend. Promoting a
-   winner applies its worktree's changes onto your repo and tears down the losers.
+```bash
+# Build everything (CPU path; no GPU required).
+cargo build --release
 
-When no coding CLI is installed, discovery honestly returns zero targets and the
-app says so — it never invents results.
+# Contamination-scan an eval set against a corpus.
+oryn scan --corpus examples/corpus.jsonl --eval examples/eval.jsonl --ngram 6
 
-## More
+# Eval with error bars + required sample size.
+oryn eval --run examples/baseline.jsonl
 
-- **Command palette** (top-bar search / ⌘K) — fuzzy command search, keyboard-driven.
-- **Cancel** an in-flight run; **persisted** preferences across launches.
-- **Context Broker** — a real content-addressed artifact store; the shared
-  cache-stable prefix is stored once across targets (real dedup numbers).
-- **CLI detection** — Launch shows which coding CLIs are actually installed.
-- **CI** — `.github/workflows/ci.yml` enforces fmt, clippy (`-D warnings`),
-  build, and tests on every push/PR.
+# Paired regression gate (exits non-zero if the candidate regressed).
+oryn gate --baseline examples/baseline.jsonl --candidate examples/candidate.jsonl
 
-## Run it
+# Determinism analysis of repeated generations.
+oryn determinism --runs examples/generations.json
 
-```sh
-cargo run -p oryn-app      # opens the desktop app (needs a display); binary is `oryn`
-cargo test --workspace     # 360+ unit + integration tests
+# Run the HTTP API for a UI to call.
+oryn serve --addr 127.0.0.1:8787
 ```
 
-### Configuration (environment)
+### Data formats
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `ORYN_ADVISOR_ENDPOINT` | OpenAI-compatible advisor endpoint | `http://localhost:11434` |
-| `ORYN_ADVISOR_MODEL` | Local advisor model | `qwen2.5-coder:7b` |
-| `ORYN_WORKTREE_BASE` | Where per-target worktrees are created | `.oryn/worktrees` |
-| `ORYN_CATALOG_PATH` | Parked catalog (pricing + benchmarks) | `~/.oryn/catalog.json` |
-| `ARTIFICIALANALYSIS_API_KEY` | Use Artificial Analysis for pricing+benchmarks | _(keyless OpenRouter + Aider leaderboard if unset)_ |
+* **Documents** (`scan`): JSONL or a JSON array of `{"id","text"}`.
+* **Eval runs** (`eval`, `gate`): JSONL or a JSON array of `{"id","score"}`
+  (use `0`/`1` for accuracy-style scores; any real value works).
+* **Generations** (`determinism`): a JSON array of strings, or one per line.
+
+## HTTP API
+
+`oryn serve` (or the `oryn-server` binary) exposes:
+
+| Method | Path | Body → Response |
+|--------|------|-----------------|
+| GET | `/api/health` | → `{status}` |
+| GET | `/api/info` | → versions + compute backend |
+| POST | `/api/scan` | `{corpus, eval, config?}` → contamination report |
+| POST | `/api/duplicates` | `{docs, config?}` → intra-set near-duplicates |
+| POST | `/api/eval` | `{run, config?}` → eval report (CI, power) |
+| POST | `/api/gate` | `{baseline, candidate, level?}` → regression gate |
+| POST | `/api/determinism` | `{outputs}` → determinism report |
+| POST | `/api/integrity` | integrity report → `{verdict, report}` |
+| POST | `/api/keygen` | → `{secret_hex, public_hex}` |
+| POST | `/api/attest/seal` | `{seed_hex?, entries}` → signed chain |
+| POST | `/api/attest/verify` | signed chain → `{ok, entries, error?}` |
+
+CORS is permissive so a browser UI can call it directly. A dedicated UI is
+designed separately and built against this API.
+
+## Building the CUDA kernels
+
+```bash
+# Requires nvcc on PATH and a CUDA-capable GPU at runtime.
+cargo build --release -p oryn-cuda --features cuda
+oryn info   # compute backend will report "cuda"
+```
+
+Without `nvcc`, the build prints a warning and uses the CPU reference path; the
+public API and results are identical (the reference mirrors the kernels'
+fixed-reduction-order semantics).
+
+## Design principles
+
+* **Deterministic by construction** — same input, same bytes out, on any
+  machine. Hashing is fixed-seeded; the bootstrap is seeded; map iteration is
+  sorted before output.
+* **No model in the loop** — verification you can trust must not reintroduce the
+  failure mode (a hallucinating judge) it is trying to catch.
+* **Auditable** — every result can be signed and chained.
 
 ## License
 
