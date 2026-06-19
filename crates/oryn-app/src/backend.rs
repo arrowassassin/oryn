@@ -607,29 +607,69 @@ impl ArtifactStore {
 
 // ── CLI availability ──────────────────────────────────────────────────────────
 
-/// Whether an executable named `bin` is found on `PATH`. Real detection — checks
-/// each `PATH` entry for an existing (executable, on Unix) file.
+/// Whether an executable named `bin` is found. Real detection — checks each
+/// `PATH` entry plus a set of common per-user/global install locations for an
+/// existing (executable, on Unix) file.
+///
+/// The extra locations matter because GUI-launched apps (and some terminals)
+/// don't always inherit the login shell's `PATH`, so tools installed by `npm -g`,
+/// Homebrew, cargo, bun, etc. would otherwise read as "not found" even when they
+/// are installed and runnable.
 pub fn is_on_path(bin: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| {
-        let candidate = dir.join(bin);
-        match std::fs::metadata(&candidate) {
-            Ok(meta) if meta.is_file() => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    meta.permissions().mode() & 0o111 != 0
-                }
-                #[cfg(not(unix))]
-                {
-                    true
-                }
-            }
-            _ => false,
+    search_dirs()
+        .into_iter()
+        .any(|dir| is_executable(&dir.join(bin)))
+}
+
+/// Every directory to search for a CLI: `PATH` entries first, then common
+/// install prefixes (deduplicated, order-preserving).
+fn search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push = |dir: PathBuf| {
+        if seen.insert(dir.clone()) {
+            dirs.push(dir);
         }
-    })
+    };
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            push(dir);
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for rel in [
+            ".local/bin",
+            ".npm-global/bin",
+            ".cargo/bin",
+            ".bun/bin",
+            ".deno/bin",
+            ".volta/bin",
+        ] {
+            push(home.join(rel));
+        }
+    }
+    for abs in ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"] {
+        push(PathBuf::from(abs));
+    }
+    dirs
+}
+
+/// Whether `candidate` is an existing file that is executable (on Unix).
+fn is_executable(candidate: &std::path::Path) -> bool {
+    match std::fs::metadata(candidate) {
+        Ok(meta) if meta.is_file() => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                meta.permissions().mode() & 0o111 != 0
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        }
+        _ => false,
+    }
 }
 
 /// Mark which adapters' CLIs are actually installed, so Launch shows real

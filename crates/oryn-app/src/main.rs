@@ -10,6 +10,7 @@
 //! side-effecting actions (launching a run, editing the task) have dedicated
 //! handlers here.
 
+mod assets;
 mod backend;
 mod broker;
 mod colors;
@@ -28,7 +29,7 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::{
     App, Application, Bounds, Context, FocusHandle, FontWeight, KeyDownEvent, Task, Window,
-    WindowBounds, WindowOptions, div, px, size,
+    WindowBounds, WindowOptions, div, px, size, svg,
 };
 
 use backend::{LiveReport, RepoInfo, UserIdentity};
@@ -716,13 +717,32 @@ impl Root {
                         .bg(solid(t.accent.base)),
                 )
             })
-            .child(div().size(px(18.0)).rounded(px(5.0)).bg(icon_color))
+            .child(
+                svg()
+                    .path(Self::icon_path(screen))
+                    .size(px(18.0))
+                    .text_color(icon_color),
+            )
             .child(
                 div()
                     .text_size(px(9.0))
                     .text_color(label_color)
                     .child(label),
             )
+    }
+
+    /// Embedded icon asset path for each primary screen (served by
+    /// [`assets::Assets`]).
+    fn icon_path(screen: Screen) -> &'static str {
+        match screen {
+            Screen::Mission => "icons/mission.svg",
+            Screen::Timeline => "icons/timeline.svg",
+            Screen::Review => "icons/review.svg",
+            Screen::Broker => "icons/broker.svg",
+            Screen::Launch => "icons/launch.svg",
+            Screen::Settings => "icons/settings.svg",
+            Screen::Profile => "icons/you.svg",
+        }
     }
 
     fn left_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -803,20 +823,22 @@ impl Render for Root {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1280.0), px(820.0)), cx);
-        let opened = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_window, cx| cx.new(Root::new),
-        );
-        if let Err(err) = opened {
-            eprintln!("oryn: could not open a window: {err}");
-            std::process::exit(1);
-        }
-    });
+    Application::new()
+        .with_assets(assets::Assets)
+        .run(|cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(1280.0), px(820.0)), cx);
+            let opened = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |_window, cx| cx.new(Root::new),
+            );
+            if let Err(err) = opened {
+                eprintln!("oryn: could not open a window: {err}");
+                std::process::exit(1);
+            }
+        });
 }
 
 #[cfg(test)]

@@ -379,11 +379,10 @@ impl Root {
         })
     }
 
-    /// Toggle an adapter's selected state (planned adapters cannot be enabled).
+    /// Toggle an adapter's selected state. Every framework is selectable; the
+    /// install badge is informational and does not gate selection.
     pub fn toggle_adapter(&mut self, i: usize) {
-        if let Some(a) = self.adapters.get_mut(i)
-            && a.tag != "planned"
-        {
+        if let Some(a) = self.adapters.get_mut(i) {
             a.enabled = !a.enabled;
         }
     }
@@ -545,11 +544,16 @@ mod tests {
     }
 
     #[test]
-    fn planned_adapter_cannot_be_enabled() {
+    fn cursor_adapter_can_be_enabled() {
         let mut r = Root::headless();
-        let cursor = r.adapters.iter().position(|a| a.tag == "planned").unwrap();
+        let cursor = r
+            .adapters
+            .iter()
+            .position(|a| a.name == "Cursor Agent")
+            .unwrap();
+        assert!(!r.adapters[cursor].enabled, "cursor starts unselected");
         r.apply(Msg::ToggleAdapter(cursor));
-        assert!(!r.adapters[cursor].enabled);
+        assert!(r.adapters[cursor].enabled, "cursor can now be selected");
     }
 
     #[test]

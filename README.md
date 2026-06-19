@@ -54,8 +54,8 @@ app says so — it never invents results.
 ## Run it
 
 ```sh
-cargo run -p oryn          # opens the desktop app (needs a display)
-cargo test                 # 320+ unit + integration tests
+cargo run -p oryn-app      # opens the desktop app (needs a display); binary is `oryn`
+cargo test --workspace     # 360+ unit + integration tests
 ```
 
 ### Configuration (environment)

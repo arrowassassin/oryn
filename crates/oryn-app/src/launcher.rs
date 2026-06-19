@@ -67,17 +67,15 @@ impl Adapter {
             },
             Adapter {
                 name: "Cursor Agent",
-                cli: "cursor",
+                // The engine drives Cursor headlessly via `cursor-agent` (see
+                // `oryn_core::orchestrator::harness`), so detect that binary.
+                cli: "cursor-agent",
                 color: 0x6AD6E0,
                 enabled: false,
-                tag: "planned",
+                tag: "subscription",
                 installed: false,
             },
         ]
-    }
-
-    fn selectable(&self) -> bool {
-        self.tag != "planned"
     }
 }
 
@@ -231,7 +229,7 @@ impl Root {
         } else {
             (solid(t.surfaces.panel), overlay(t.overlays.w07))
         };
-        let mut row = div()
+        let row = div()
             .id(("adapter", idx))
             .flex_1()
             .flex()
@@ -242,12 +240,9 @@ impl Root {
             .rounded(px(9.0))
             .bg(bg)
             .border_1()
-            .border_color(border);
-        if a.selectable() {
-            row = row
-                .cursor_pointer()
-                .on_click(self.on(cx, Msg::ToggleAdapter(idx)));
-        }
+            .border_color(border)
+            .cursor_pointer()
+            .on_click(self.on(cx, Msg::ToggleAdapter(idx)));
         row.child(
             div()
                 .flex()
@@ -540,12 +535,18 @@ mod tests {
     }
 
     #[test]
-    fn planned_is_not_selectable() {
+    fn cursor_targets_the_headless_agent_binary() {
+        // The engine runs Cursor via `cursor-agent`; detection must match so the
+        // install badge and routing agree.
         let cursor = Adapter::available()
             .into_iter()
-            .find(|a| a.tag == "planned")
+            .find(|a| a.name == "Cursor Agent")
             .unwrap();
-        assert!(!cursor.selectable());
+        assert_eq!(cursor.cli, "cursor-agent");
+        assert_ne!(
+            cursor.tag, "planned",
+            "cursor is a real, selectable adapter"
+        );
     }
 
     #[test]
