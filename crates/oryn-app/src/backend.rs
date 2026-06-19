@@ -26,7 +26,9 @@ use oryn_core::orchestrator::listing::{
 };
 use oryn_core::orchestrator::pricing::{PricingSource, PricingTable, parse_openrouter_models};
 use oryn_core::orchestrator::provider::{AgentFramework, ModelId, ModelSpec};
-use oryn_core::orchestrator::runner::{ProcessRunner, SystemProcessRunner};
+use oryn_core::orchestrator::runner::{
+    ProcessOutput, ProcessRunner, RunError, SystemProcessRunner,
+};
 use oryn_core::orchestrator::task::{Subtask, SubtaskId, SubtaskKind};
 use std::collections::BTreeMap;
 
@@ -427,7 +429,7 @@ pub fn build_engine(
     };
     Engine::new(
         config,
-        Arc::new(SystemProcessRunner),
+        Arc::new(HostRunner::new()),
         Arc::new(UreqHttp),
         capability.clone(),
     )
@@ -455,7 +457,7 @@ fn list_command_for(framework: AgentFramework, cli: &str) -> Option<ListCommand>
 /// No hardcoded model names — whatever the CLI reports is what we get. Frameworks
 /// whose CLI is missing or exposes no listing simply contribute nothing.
 pub fn discover_targets(adapters: &[Adapter]) -> Vec<(AgentFramework, ModelId)> {
-    let runner = SystemProcessRunner;
+    let runner = HostRunner::new();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut out = Vec::new();
     for adapter in adapters.iter().filter(|a| a.enabled) {
@@ -607,18 +609,160 @@ impl ArtifactStore {
 
 // ── CLI availability ──────────────────────────────────────────────────────────
 
-/// Whether an executable named `bin` is found. Real detection — checks each
-/// `PATH` entry plus a set of common per-user/global install locations for an
-/// existing (executable, on Unix) file.
-///
-/// The extra locations matter because GUI-launched apps (and some terminals)
-/// don't always inherit the login shell's `PATH`, so tools installed by `npm -g`,
-/// Homebrew, cargo, bun, etc. would otherwise read as "not found" even when they
-/// are installed and runnable.
+/// Whether an executable named `bin` is installed and launchable — i.e. whether
+/// [`resolve_cli`] can find it.
 pub fn is_on_path(bin: &str) -> bool {
-    search_dirs()
-        .into_iter()
-        .any(|dir| is_executable(&dir.join(bin)))
+    resolve_cli(bin).is_some()
+}
+
+/// Resolve `bin` to the absolute path of a runnable executable, matching the
+/// user's real environment — not just the (often-truncated) PATH a GUI launch
+/// inherits.
+///
+/// Resolution order:
+/// 1. an explicit path (`bin` already contains `/`);
+/// 2. `PATH` entries plus common install prefixes ([`search_dirs`]);
+/// 3. the **login shell** (`$SHELL -lc 'command -v …'`), which sources the user's
+///    profile and so sees tools installed via nvm, Homebrew, `npm -g`, custom
+///    prefixes, etc. that step 2 can miss.
+pub fn resolve_cli(bin: &str) -> Option<PathBuf> {
+    if bin.contains('/') {
+        let p = PathBuf::from(bin);
+        return is_executable(&p).then_some(p);
+    }
+    for dir in search_dirs() {
+        let candidate = dir.join(bin);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
+    login_shell_which(bin)
+}
+
+/// Ask the user's login shell to resolve `bin` to an absolute executable path.
+/// Returns `None` if the shell can't be run, the lookup fails, or the result
+/// isn't an absolute executable. `bin` is restricted to a safe character set so
+/// it can never inject shell syntax.
+#[cfg(unix)]
+fn login_shell_which(bin: &str) -> Option<PathBuf> {
+    if bin.is_empty()
+        || !bin
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return None;
+    }
+    let shell = std::env::var("SHELL").ok()?;
+    let out = std::process::Command::new(shell)
+        .args(["-lc", &format!("command -v {bin}")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // Take the last absolute, executable path printed (profile scripts may emit
+    // banner noise before the answer).
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find_map(|line| {
+            let p = PathBuf::from(line);
+            (p.is_absolute() && is_executable(&p)).then_some(p)
+        })
+}
+
+#[cfg(not(unix))]
+fn login_shell_which(_bin: &str) -> Option<PathBuf> {
+    None
+}
+
+/// The user's login-shell `PATH`, if it can be read. Sourcing the profile makes
+/// nvm/Homebrew/npm-global tools visible to child processes the app spawns.
+#[cfg(unix)]
+fn login_shell_path() -> Option<std::ffi::OsString> {
+    let shell = std::env::var("SHELL").ok()?;
+    let out = std::process::Command::new(shell)
+        .args(["-lc", "printf 'ORYNPATH=%s\\n' \"$PATH\""])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .rev()
+        .find_map(|l| l.strip_prefix("ORYNPATH="))
+        .filter(|p| !p.is_empty())
+        .map(std::ffi::OsString::from)
+}
+
+#[cfg(not(unix))]
+fn login_shell_path() -> Option<std::ffi::OsString> {
+    None
+}
+
+/// Build the `PATH` child processes should run with: the login-shell `PATH`
+/// unioned with the process `PATH` and common install prefixes ([`search_dirs`]),
+/// de-duplicated and order-preserving.
+fn host_path() -> std::ffi::OsString {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push = |dir: PathBuf| {
+        if seen.insert(dir.clone()) {
+            dirs.push(dir);
+        }
+    };
+    if let Some(p) = login_shell_path() {
+        for dir in std::env::split_paths(&p) {
+            push(dir);
+        }
+    }
+    for dir in search_dirs() {
+        push(dir);
+    }
+    std::env::join_paths(dirs).unwrap_or_default()
+}
+
+/// A [`ProcessRunner`] that makes host CLIs reachable however the app was
+/// launched. It resolves each program to its absolute path and runs every child
+/// with the [`host_path`] `PATH`, so tools installed via nvm/Homebrew/`npm -g`
+/// (which a GUI launch frequently can't see) are both found *and* able to locate
+/// their own dependencies (e.g. `node`). Delegates the actual spawn to
+/// [`SystemProcessRunner`].
+pub struct HostRunner {
+    inner: SystemProcessRunner,
+    path: std::ffi::OsString,
+}
+
+impl HostRunner {
+    /// Capture the host `PATH` once (one login-shell probe) for reuse.
+    pub fn new() -> Self {
+        Self {
+            inner: SystemProcessRunner,
+            path: host_path(),
+        }
+    }
+}
+
+impl Default for HostRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProcessRunner for HostRunner {
+    fn run(&self, inv: &HarnessInvocation) -> Result<ProcessOutput, RunError> {
+        let mut inv = inv.clone();
+        if let Some(abs) = resolve_cli(&inv.program) {
+            inv.program = abs.to_string_lossy().into_owned();
+        }
+        if !inv.env.iter().any(|(k, _)| k == "PATH") {
+            inv.env
+                .push(("PATH".into(), self.path.to_string_lossy().into_owned()));
+        }
+        self.inner.run(&inv)
+    }
 }
 
 /// Every directory to search for a CLI: `PATH` entries first, then common
