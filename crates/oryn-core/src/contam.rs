@@ -184,18 +184,6 @@ impl CorpusIndex {
         }
     }
 
-    /// Number of documents indexed.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.doc_ids.len()
-    }
-
-    /// Whether the index is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.doc_ids.is_empty()
-    }
-
     /// Scan `eval` against the corpus, returning a full report.
     #[must_use]
     pub fn scan(&self, eval: &[Document]) -> ContaminationReport {

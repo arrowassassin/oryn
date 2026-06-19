@@ -134,7 +134,6 @@ pub fn batch_invariant_matvec(a: &[f32], x: &[f32], m: usize, k: usize) -> Vec<f
 mod ffi {
     extern "C" {
         pub fn oryn_cuda_batch_invariant_sum(x: *const f32, n: i32) -> f32;
-        pub fn oryn_cuda_naive_sum(x: *const f32, n: i32) -> f32;
         pub fn oryn_cuda_batch_invariant_matvec(
             a: *const f32,
             x: *const f32,

@@ -32,8 +32,8 @@ for audit (EU AI Act Art. 12/19 record-keeping).
 |-------|------------|
 | [`oryn-core`](crates/oryn-core) | The engine: contamination scanning, statistically-rigorous evals + regression gate, determinism analysis, signed attestations, and the aggregate integrity report. Deterministic; no I/O hidden inside. |
 | [`oryn-cuda`](crates/oryn-cuda) | Batch-invariant numerical kernels. Real CUDA (`kernels/batch_invariant.cu`) compiled and linked when the `cuda` feature is set and `nvcc` is present; otherwise a **tested CPU reference** with identical semantics. |
-| [`oryn-server`](crates/oryn-server) | A UI-agnostic JSON HTTP API over the engine (axum), so any frontend can drive it. |
-| [`oryn-cli`](crates/oryn-cli) | The `oryn` command line: `scan`, `eval`, `gate`, `determinism`, `keygen`, `attest`, `serve`, `info`. |
+| [`oryn-server`](crates/oryn-server) | A UI-agnostic JSON HTTP API over the engine (axum) — a library, served via `oryn serve`, so any frontend can drive it. |
+| [`oryn-cli`](crates/oryn-cli) | The `oryn` command line — the single binary: `scan`, `eval`, `gate`, `determinism`, `keygen`, `attest`, `serve`, `info`. |
 
 ## Quick start
 
@@ -66,7 +66,7 @@ oryn serve --addr 127.0.0.1:8787
 
 ## HTTP API
 
-`oryn serve` (or the `oryn-server` binary) exposes:
+`oryn serve` exposes:
 
 | Method | Path | Body → Response |
 |--------|------|-----------------|

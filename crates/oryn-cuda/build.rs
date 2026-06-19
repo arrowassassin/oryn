@@ -64,9 +64,11 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={out_dir}");
     println!("cargo:rustc-link-lib=static=orynkernels");
-    // Link the CUDA runtime.
-    if let Some(cuda_lib) = cuda_lib_dir(&nvcc) {
-        println!("cargo:rustc-link-search=native={cuda_lib}");
+    // Link the CUDA runtime from the conventional install location.
+    for cand in ["/usr/local/cuda/lib64", "/usr/local/cuda/lib"] {
+        if std::path::Path::new(cand).exists() {
+            println!("cargo:rustc-link-search=native={cand}");
+        }
     }
     println!("cargo:rustc-link-lib=dylib=cudart");
     println!("cargo:rustc-link-lib=dylib=stdc++");
@@ -76,22 +78,5 @@ fn main() {
 
 fn which_nvcc() -> Option<String> {
     let out = Command::new("nvcc").arg("--version").output().ok()?;
-    if out.status.success() {
-        Some("nvcc".to_string())
-    } else {
-        None
-    }
-}
-
-/// Best-effort discovery of the CUDA library directory from the nvcc path.
-fn cuda_lib_dir(_nvcc: &str) -> Option<String> {
-    let out = Command::new("nvcc").arg("--version").output().ok()?;
-    let _ = out;
-    // Common default; nvcc on PATH usually implies /usr/local/cuda.
-    for cand in ["/usr/local/cuda/lib64", "/usr/local/cuda/lib"] {
-        if std::path::Path::new(cand).exists() {
-            return Some(cand.to_string());
-        }
-    }
-    None
+    out.status.success().then(|| "nvcc".to_string())
 }

@@ -35,8 +35,4 @@ pub enum OrynError {
     /// Hex decoding error (keys, signatures).
     #[error("hex decode: {0}")]
     Hex(#[from] hex::FromHexError),
-
-    /// I/O error.
-    #[error("io: {0}")]
-    Io(#[from] std::io::Error),
 }

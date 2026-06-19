@@ -55,22 +55,12 @@ pub fn tokenize(text: &str, norm: Normalization) -> Vec<String> {
 
 /// Hash a single token slice with a fixed-seed hasher.
 fn hash_tokens(tokens: &[String]) -> u64 {
-    let mut h = AHasher::default_with_seeds();
+    let mut h: AHasher = ahash::RandomState::with_seeds(SEED0, SEED1, SEED2, SEED3).build_hasher();
     tokens.len().hash(&mut h);
     for t in tokens {
         t.hash(&mut h);
     }
     h.finish()
-}
-
-trait SeededHasher {
-    fn default_with_seeds() -> Self;
-}
-
-impl SeededHasher for AHasher {
-    fn default_with_seeds() -> Self {
-        ahash::RandomState::with_seeds(SEED0, SEED1, SEED2, SEED3).build_hasher()
-    }
 }
 
 /// Compute the set of distinct n-gram fingerprints (as `u64`) for `text`.
