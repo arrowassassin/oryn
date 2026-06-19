@@ -1174,7 +1174,7 @@ pub fn run_live(
             attempts: vec![],
             gross_usd: 0.0,
             saved_usd: 0.0,
-            note: "No models discovered. Install & sign in to a coding CLI (claude, codex, gemini, aider) and select it in Launch — Oryn lists exactly the models each CLI reports."
+            note: "No models discovered. Select a CLI that exposes a model list — Cursor (`cursor-agent models`), Aider (`aider --list-models`), or local Ollama — and make sure you're signed in. Claude Code and Gemini have no list command; point Oryn at one with ORYN_LIST_<CLI> if you want to route across them."
                 .to_string(),
             store_artifacts: { let (n, _) = ArtifactStore::open().stats(); n },
             store_bytes: { let (_, b) = ArtifactStore::open().stats(); b },

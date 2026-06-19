@@ -49,8 +49,10 @@ pub fn default_list_command(framework: AgentFramework) -> Option<ListCommand> {
         // `aider --list-models <substr>` lists litellm models matching the substring;
         // "/" matches provider-prefixed ids (the vast majority).
         AgentFramework::Aider => Some(ListCommand::new("aider", &["--list-models", "/"])),
-        // Claude Code / Codex / Cursor / Gemini have no stable list subcommand today;
-        // the app can configure one per framework. No guessed flags here.
+        // `cursor-agent models` prints the models the logged-in account can use.
+        AgentFramework::Cursor => Some(ListCommand::new("cursor-agent", &["models"])),
+        // Claude Code / Codex / Gemini have no stable list subcommand today; the app
+        // can configure one per framework via `ORYN_LIST_<CLI>`. No guessed flags here.
         _ => None,
     }
 }
@@ -289,6 +291,9 @@ mod tests {
             default_list_command(AgentFramework::Aider).unwrap().program,
             "aider"
         );
+        let cursor = default_list_command(AgentFramework::Cursor).unwrap();
+        assert_eq!(cursor.program, "cursor-agent");
+        assert_eq!(cursor.args, vec!["models".to_string()]);
         assert!(default_list_command(AgentFramework::ClaudeCode).is_none());
         assert!(default_list_command(AgentFramework::Codex).is_none());
     }
