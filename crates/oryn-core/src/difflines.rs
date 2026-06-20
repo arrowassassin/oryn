@@ -92,7 +92,18 @@ fn parse_hunk_header(rest: &str) -> Option<Hunk> {
 /// Fails if git cannot run.
 pub fn changed_hunks(dir: &Path, base: &str) -> Result<BTreeMap<String, Vec<Hunk>>> {
     let out = Command::new("git")
-        .args(["diff", "-U0", base, "--"])
+        // `--no-renames`: a moved file becomes delete+add so its old-side lines
+        // map to the base path coverage was recorded under (renames would key
+        // hunks to the new path and silently miss the test). `--end-of-options`
+        // guards a `base` that begins with `-`.
+        .args([
+            "diff",
+            "-U0",
+            "--no-renames",
+            "--end-of-options",
+            base,
+            "--",
+        ])
         .current_dir(dir)
         .output()?;
     if !out.status.success() {

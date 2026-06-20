@@ -167,17 +167,34 @@ fn is_green(
         .is_some_and(|fp| st.is_green(crate_name, fp))
 }
 
+/// Apply an *observed* outcome to a crate's green cache. `None` means the crate
+/// produced no test outcomes this run — we leave its cache state untouched
+/// (absence of failure is not proof of passing).
 fn record_green(
     st: &mut Store,
     crate_name: &str,
     fps: &std::collections::BTreeMap<String, String>,
     now: u64,
-    passed: bool,
+    passed: Option<bool>,
 ) {
     match (passed, fps.get(crate_name)) {
-        (true, Some(fp)) => st.record_green(crate_name, fp, now),
-        _ => st.clear_green(crate_name),
+        (Some(true), Some(fp)) => st.record_green(crate_name, fp, now),
+        (Some(false), _) => st.clear_green(crate_name),
+        // None (unobserved) or missing fingerprint → don't assert green.
+        _ => {}
     }
+}
+
+/// Does `extra` contain a libtest filter that makes the run non-exhaustive
+/// (a positional name filter, `--skip`, `--exact`, `--ignored`, `--include-ignored`)?
+/// If so, a "pass" doesn't prove the whole crate is green.
+fn extra_filters_tests(extra: &[String]) -> bool {
+    extra.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--skip" | "--exact" | "--ignored" | "--include-ignored"
+        ) || (!a.starts_with('-') && !a.is_empty())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -209,10 +226,11 @@ fn run_tests_nextest(
             record_green(st, &c, fps, now, passed);
         }
     } else {
-        // No JUnit (profile not writing?) — fall back to aggregate status.
-        let ok = status.success();
+        // No JUnit (profile not writing?) — fall back to aggregate status, but
+        // only credit green when the run was exhaustive (no test filters).
+        let observed = (!extra_filters_tests(extra)).then_some(status.success());
         for c in to_run {
-            record_green(st, c, fps, now, ok);
+            record_green(st, c, fps, now, observed);
         }
     }
     Ok(status.code().unwrap_or(1))
@@ -231,20 +249,40 @@ fn run_tests_cargo(
     for c in to_run {
         cmd.args(["-p", c]);
     }
-    cmd.args(extra);
+    // Route passthrough args to libtest (after `--`) so `oryn test -- --nocapture`
+    // works instead of being rejected by cargo.
+    if !extra.is_empty() {
+        cmd.arg("--");
+        cmd.args(extra);
+    }
     apply_cache(&mut cmd, cache);
     let status = cmd.status().context("running cargo test")?;
-    // Aggregate result: we cannot attribute per crate, so be conservative —
-    // mark green only if the whole run passed; otherwise forget green.
-    let ok = status.success();
+    // Aggregate result: we can't attribute per crate, and a filtered run
+    // (`-- --skip foo`) isn't exhaustive — only credit green for an
+    // unfiltered, fully-passing run; otherwise leave/clear cache conservatively.
+    let observed = if extra_filters_tests(extra) {
+        if status.success() {
+            None // passed, but not exhaustive → don't assert green
+        } else {
+            Some(false) // a failure is always real
+        }
+    } else {
+        Some(status.success())
+    };
     for c in to_run {
-        record_green(st, c, fps, now, ok);
+        record_green(st, c, fps, now, observed);
     }
     Ok(status.code().unwrap_or(1))
 }
 
 /// `oryn build`
-pub fn build(since: Option<&str>, all: bool, cache: bool, extra: &[String]) -> Result<()> {
+pub fn build(
+    since: Option<&str>,
+    all: bool,
+    tests: bool,
+    cache: bool,
+    extra: &[String],
+) -> Result<()> {
     let (graph, _root, plan) = context(since)?;
     let cands = candidates(&graph, &plan, all);
     if cands.is_empty() {
@@ -252,12 +290,24 @@ pub fn build(since: Option<&str>, all: bool, cache: bool, extra: &[String]) -> R
         return Ok(());
     }
     eprintln!(
-        "oryn: building {} affected crate(s) ▶ {}",
+        "oryn: {} {} affected crate(s) ▶ {}",
+        if tests {
+            "compiling test binaries for"
+        } else {
+            "building"
+        },
         cands.len(),
         cands.join(", ")
     );
     let mut cmd = Command::new("cargo");
-    cmd.arg("build");
+    // `--tests` front-loads the exact artifacts `oryn test` consumes (test
+    // targets differ from lib/bin: cfg(test), dev-deps), so `oryn build --tests`
+    // then `oryn test` compiles once, not twice.
+    if tests {
+        cmd.args(["test", "--no-run"]);
+    } else {
+        cmd.arg("build");
+    }
     for c in &cands {
         cmd.args(["-p", c]);
     }

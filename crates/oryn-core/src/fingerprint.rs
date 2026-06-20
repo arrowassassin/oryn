@@ -82,22 +82,42 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, Digest)>) -> io::Resu
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.file_type()?.is_dir() {
+        let ft = entry.file_type()?;
+        // Skip symlinks entirely: following them can escape the crate, loop, or
+        // (when dangling) abort the whole fingerprint. We record the link's
+        // name + target so adding/removing/retargeting one still changes the
+        // digest, without reading through it.
+        if ft.is_symlink() {
+            let target = std::fs::read_link(&path)
+                .map(|t| t.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let rel = rel_path(root, &path);
+            out.push((rel, hash_bytes(format!("symlink:{target}").as_bytes())));
+            continue;
+        }
+        if ft.is_dir() {
             // Skip build outputs and hidden directories.
             if name == "target" || name.starts_with('.') {
                 continue;
             }
             collect(root, &path, out)?;
         } else {
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            out.push((rel, hash_file(&path)?));
+            let rel = rel_path(root, &path);
+            // A file that races away or is unreadable contributes a sentinel
+            // rather than aborting the whole run; the path is still recorded so
+            // its later (re)appearance changes the digest.
+            let digest = hash_file(&path).unwrap_or([0u8; 32]);
+            out.push((rel, digest));
         }
     }
     Ok(())
+}
+
+fn rel_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// Combine per-crate own-digests into Merkle fingerprints over the dependency
@@ -162,10 +182,21 @@ pub fn compute(
     graph: &WorkspaceGraph,
     rustc_version: &str,
 ) -> io::Result<BTreeMap<String, String>> {
-    let mut own = BTreeMap::new();
-    for m in &graph.members {
-        own.insert(m.name.clone(), crate_own_digest(&m.manifest_dir)?);
-    }
+    // Hash each crate's tree in parallel — independent, IO-bound work. The
+    // final Merkle fold is order-deterministic regardless of completion order.
+    let own: BTreeMap<String, Digest> = std::thread::scope(|s| -> io::Result<_> {
+        let handles: Vec<_> = graph
+            .members
+            .iter()
+            .map(|m| s.spawn(|| crate_own_digest(&m.manifest_dir).map(|d| (m.name.clone(), d))))
+            .collect();
+        let mut own = BTreeMap::new();
+        for h in handles {
+            let (name, digest) = h.join().expect("fingerprint worker panicked")?;
+            own.insert(name, digest);
+        }
+        Ok(own)
+    })?;
     // Fold the workspace lockfile into the global salt: a dependency-version
     // change (e.g. `cargo update`) alters no crate's own sources but can change
     // any crate's test outcome, so it must invalidate every fingerprint. A
@@ -176,9 +207,17 @@ pub fn compute(
         Err(e) if e.kind() == io::ErrorKind::NotFound => [0u8; 32],
         Err(e) => return Err(e),
     };
-    let mut salt = Vec::with_capacity(rustc_version.len() + 32);
+    // Compilation flags change codegen without touching any source. Fold the
+    // ambient RUSTFLAGS (both spellings) into the salt so a flags change
+    // invalidates the cache.
+    let rustflags = std::env::var("CARGO_ENCODED_RUSTFLAGS")
+        .or_else(|_| std::env::var("RUSTFLAGS"))
+        .unwrap_or_default();
+    let mut salt = Vec::with_capacity(rustc_version.len() + 64);
     salt.extend_from_slice(rustc_version.as_bytes());
     salt.extend_from_slice(&lock_digest);
+    salt.push(0);
+    salt.extend_from_slice(rustflags.as_bytes());
     Ok(merkle_fingerprints(graph, &own, &salt))
 }
 

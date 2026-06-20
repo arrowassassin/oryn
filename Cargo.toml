@@ -23,7 +23,7 @@ thiserror = "2.0"
 anyhow = "1.0"
 blake3 = "1.5"
 quick-xml = "0.36"
-syn = { version = "2", features = ["full", "visit", "parsing"] }
+syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 clap = { version = "4.5", features = ["derive"] }

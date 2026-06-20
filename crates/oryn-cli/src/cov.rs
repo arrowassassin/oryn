@@ -18,13 +18,31 @@ use oryn_core::hybrid::{self, HybridImpact};
 use oryn_core::store::{self, Store};
 use oryn_core::{coverage, difflines, git, metadata, select};
 
+/// Is `s` a non-empty git object id (hex)? Guards values that flow into
+/// `git show <base>:<file>` / `git diff <base>` against option/ref injection.
+fn is_hex_oid(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Is repo-relative path `f` at or under directory `dir` (path-component safe,
+/// so `crates/app-utils` is not treated as under `crates/app`)?
+fn path_under(f: &str, dir: &str) -> bool {
+    dir.is_empty() || f == dir || f.starts_with(&format!("{dir}/"))
+}
+
 fn rustc_print(arg: &str) -> Result<String> {
     let out = Command::new("rustc").args(["--print", arg]).output()?;
+    if !out.status.success() {
+        bail!("rustc --print {arg} failed");
+    }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn host() -> Result<String> {
     let out = Command::new("rustc").arg("-vV").output()?;
+    if !out.status.success() {
+        bail!("rustc -vV failed");
+    }
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
@@ -51,7 +69,28 @@ fn head_commit(dir: &Path) -> Result<String> {
         .args(["rev-parse", "HEAD"])
         .current_dir(dir)
         .output()?;
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    if !out.status.success() {
+        bail!("git rev-parse HEAD failed (no commits yet?)");
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !is_hex_oid(&sha) {
+        bail!("git rev-parse HEAD returned an unexpected value");
+    }
+    Ok(sha)
+}
+
+/// Is the working tree clean (no staged/unstaged/untracked changes)? `oryn cover`
+/// must run on a clean tree, else coverage line numbers reflect the dirty tree
+/// but are labelled with HEAD's commit — decohering later `--fn` diffs.
+fn tree_is_clean(dir: &Path) -> Result<bool> {
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir)
+        .output()?;
+    if !out.status.success() {
+        bail!("git status failed");
+    }
+    Ok(out.stdout.iter().all(u8::is_ascii_whitespace))
 }
 
 /// Build (optionally instrumented) test binaries for `crate_name`, returning the
@@ -116,6 +155,13 @@ pub fn cover(since: Option<&str>) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let graph = metadata::load(&cwd)?;
     let root = git::repo_root(&cwd)?;
+    if !tree_is_clean(&cwd)? {
+        bail!(
+            "working tree has uncommitted changes — commit or stash them first.\n\
+             `oryn cover` records coverage against HEAD, so a dirty tree would mislabel \
+             line numbers and make `oryn test --fn` selection unsound."
+        );
+    }
     let changed = git::changed_files(&root, since)?;
     let plan = select::plan(&graph, &root, &changed);
     let crates = if plan.affected_crates.is_empty() {
@@ -202,6 +248,9 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
     let Some(base) = st.coverage_base.clone() else {
         bail!("no coverage recorded — run `oryn cover` first");
     };
+    if !is_hex_oid(&base) {
+        bail!("recorded coverage base is not a valid commit id — re-run `oryn cover`");
+    }
 
     // Changes since the coverage base.
     let hunks = difflines::changed_hunks(&root, &base)?;
@@ -238,7 +287,7 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
         // reference graph for const/static/type changes.
         let crate_hunks: BTreeMap<String, Vec<difflines::Hunk>> = hunks
             .iter()
-            .filter(|(f, _)| f.starts_with(&crate_rel))
+            .filter(|(f, _)| path_under(f, &crate_rel))
             .map(|(f, h)| (f.clone(), h.clone()))
             .collect();
         let base_files = crate_base_files(&cwd, &base, &crate_rel)?;

@@ -36,7 +36,12 @@ pub fn changed_files(dir: &Path, since: Option<&str>) -> Result<Vec<PathBuf>> {
     match since {
         Some(reference) => {
             // Changes between `since` and the current working tree.
-            let diff = run(dir, &["diff", "--name-only", reference])?;
+            // `--end-of-options` + `--` stop a ref that begins with `-` from
+            // being parsed as a git option (argument/option injection).
+            let diff = run(
+                dir,
+                &["diff", "--name-only", "--end-of-options", reference, "--"],
+            )?;
             files.extend(diff.lines().map(str::to_string));
         }
         None => {

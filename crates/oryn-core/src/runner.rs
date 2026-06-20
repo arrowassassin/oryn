@@ -10,19 +10,25 @@ use std::collections::BTreeMap;
 ///
 /// A test outcome belongs to crate `c` when its id is exactly `c` or begins with
 /// `c::` (the JUnit suite name is the binary id, which starts with the package
-/// name). A crate passes iff none of its outcomes failed; a crate with **no**
-/// outcomes (no tests, or all filtered) trivially passes.
+/// name). A crate passes iff it had **at least one** observed outcome and none
+/// failed. A crate with **no** observed outcomes returns `None` (absence of
+/// failure is *not* evidence of passing — we must not record it green), so the
+/// caller leaves its cache state untouched.
 ///
 /// Returns a map over exactly `crates`.
 #[must_use]
-pub fn attribute_crates(outcomes: &[TestOutcome], crates: &[String]) -> BTreeMap<String, bool> {
-    let mut result: BTreeMap<String, bool> = crates.iter().map(|c| (c.clone(), true)).collect();
+pub fn attribute_crates(
+    outcomes: &[TestOutcome],
+    crates: &[String],
+) -> BTreeMap<String, Option<bool>> {
+    // None = no outcome observed yet; Some(true/false) = observed pass/fail.
+    let mut result: BTreeMap<String, Option<bool>> =
+        crates.iter().map(|c| (c.clone(), None)).collect();
     for o in outcomes {
-        if o.passed {
-            continue;
-        }
         if let Some(c) = owning_crate(&o.id, crates) {
-            result.insert(c, false);
+            let slot = result.entry(c).or_insert(None);
+            // A failure is sticky; a pass only upgrades an unobserved crate.
+            *slot = Some(slot.unwrap_or(true) && o.passed);
         }
     }
     result
@@ -30,11 +36,20 @@ pub fn attribute_crates(outcomes: &[TestOutcome], crates: &[String]) -> BTreeMap
 
 /// Which of `crates` owns test id `id` (longest matching name wins, so
 /// `oryn-core` is preferred over a hypothetical `oryn`).
+///
+/// Cargo normalizes `-` to `_` in target/binary names, so the JUnit suite for
+/// package `my-crate` may surface as `my_crate::…`; matching is done on a
+/// hyphen-insensitive basis to attribute those correctly.
 #[must_use]
 pub fn owning_crate(id: &str, crates: &[String]) -> Option<String> {
+    let norm = |s: &str| s.replace('-', "_");
+    let id_n = norm(id);
     crates
         .iter()
-        .filter(|c| id == c.as_str() || id.starts_with(&format!("{c}::")))
+        .filter(|c| {
+            let cn = norm(c);
+            id_n == cn || id_n.starts_with(&format!("{cn}::"))
+        })
         .max_by_key(|c| c.len())
         .cloned()
 }
@@ -61,16 +76,18 @@ mod tests {
             outcome("oryn-cli::main::ok", true),
         ];
         let r = attribute_crates(&outs, &crates);
-        assert!(!r["oryn-core"]);
-        assert!(r["oryn-cli"]);
+        assert_eq!(r["oryn-core"], Some(false));
+        assert_eq!(r["oryn-cli"], Some(true));
     }
 
     #[test]
-    fn crate_with_no_outcomes_passes() {
+    fn crate_with_no_outcomes_is_unobserved_not_green() {
+        // `b` ran no tests → None, so the caller must NOT record it green.
         let crates = vec!["a".to_string(), "b".to_string()];
         let outs = vec![outcome("a::x", true)];
         let r = attribute_crates(&outs, &crates);
-        assert!(r["a"] && r["b"]);
+        assert_eq!(r["a"], Some(true));
+        assert_eq!(r["b"], None);
     }
 
     #[test]
@@ -82,5 +99,17 @@ mod tests {
             Some("oryn-core")
         );
         assert_eq!(owning_crate("oryn::y", &crates).as_deref(), Some("oryn"));
+    }
+
+    #[test]
+    fn hyphen_underscore_normalized_attribution() {
+        // Package `my-crate` surfaces as suite `my_crate::…`.
+        let crates = vec!["my-crate".to_string()];
+        assert_eq!(
+            owning_crate("my_crate::tests::ok", &crates).as_deref(),
+            Some("my-crate")
+        );
+        let outs = vec![outcome("my_crate::tests::bad", false)];
+        assert_eq!(attribute_crates(&outs, &crates)["my-crate"], Some(false));
     }
 }

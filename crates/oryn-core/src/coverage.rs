@@ -14,6 +14,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const KIND_CODE: u64 = 0;
 
+/// Upper bound on the line span of a single region. `llvm-cov` line numbers are
+/// bounded by the source file's length; a region claiming more than this is
+/// corrupt or hostile output, and expanding `l0..=l1` for it would exhaust
+/// memory. Skipping such a region is safe (it only drops coverage → over-runs).
+const MAX_REGION_SPAN: u64 = 1_000_000;
+
 /// Map of source filename → set of executed (1-based) line numbers.
 pub type Executed = BTreeMap<String, BTreeSet<usize>>;
 
@@ -36,16 +42,27 @@ pub fn parse_export(json: &[u8]) -> Result<Executed> {
                 if r.len() < 8 {
                     continue;
                 }
-                let (Some(l0), Some(l1), Some(count), Some(file_id), Some(kind)) = (
+                let (Some(l0), Some(l1), Some(count), Some(file_id), Some(expanded_id), Some(kind)) = (
                     r[0].as_u64(),
                     r[2].as_u64(),
                     r[4].as_u64(),
                     r[5].as_u64(),
+                    r[6].as_u64(),
                     r[7].as_u64(),
                 ) else {
                     continue;
                 };
                 if kind != KIND_CODE || count == 0 {
+                    continue;
+                }
+                // Macro-expansion regions (expanded_file_id != 0) report line
+                // numbers in the *expansion*, not the source file; attributing
+                // them to source lines smears coverage onto the wrong lines.
+                if expanded_id != 0 {
+                    continue;
+                }
+                // Guard against corrupt/hostile line ranges before expanding.
+                if l1 < l0 || l1 - l0 > MAX_REGION_SPAN {
                     continue;
                 }
                 if let Some(name) = filenames.get(file_id as usize) {
@@ -101,5 +118,24 @@ mod tests {
     fn empty_export() {
         let cov = parse_export(br#"{"data":[]}"#).unwrap();
         assert!(cov.is_empty());
+    }
+
+    #[test]
+    fn skips_macro_expansion_and_insane_ranges() {
+        // region 1: macro expansion (expanded_file_id=2) → skipped
+        // region 2: absurd span (u64::MAX end) → skipped, no OOM
+        // region 3: normal code line 5 → kept
+        let json = br#"{"data":[{"functions":[{
+          "filenames":["/r/lib.rs"],
+          "regions":[
+            [1,1,3,9,1,0,2,0],
+            [1,1,18446744073709551615,9,1,0,0,0],
+            [5,1,5,9,1,0,0,0]
+          ]}]}]}"#;
+        let cov = parse_export(json).unwrap();
+        let lines = &cov["/r/lib.rs"];
+        assert!(lines.contains(&5));
+        assert!(!lines.contains(&1)); // both skipped regions started at line 1
+        assert_eq!(lines.len(), 1);
     }
 }

@@ -69,6 +69,11 @@ enum Cmd {
         /// Build the whole workspace regardless of the diff.
         #[arg(long)]
         all: bool,
+        /// Compile the affected crates' **test** binaries (what `oryn test`
+        /// runs) instead of their lib/bin targets — front-loads compilation so
+        /// a later `oryn test` is run-only and doesn't recompile.
+        #[arg(long)]
+        tests: bool,
         /// Use sccache as the compile cache (RUSTC_WRAPPER) if available.
         #[arg(long)]
         cache: bool,
@@ -82,8 +87,8 @@ enum Cmd {
         /// history Oryn recorded from past `oryn test` runs.
         #[arg(long)]
         input: Option<PathBuf>,
-        /// Confidence/credible level.
-        #[arg(long, default_value_t = 0.95)]
+        /// Confidence/credible level (0..1).
+        #[arg(long, default_value_t = 0.95, value_parser = unit_interval)]
         level: f64,
         /// Emit JSON.
         #[arg(long)]
@@ -92,10 +97,10 @@ enum Cmd {
     /// Reruns needed to confirm a flake of a given rate at a confidence level.
     Budget {
         /// Per-run failure probability (0..1).
-        #[arg(long)]
+        #[arg(long, value_parser = unit_interval)]
         fail_rate: f64,
         /// Target confidence (0..1).
-        #[arg(long, default_value_t = 0.95)]
+        #[arg(long, default_value_t = 0.95, value_parser = unit_interval)]
         confidence: f64,
     },
     /// Open the terminal dashboard (selection, cache, crates, flaky stats).
@@ -104,7 +109,7 @@ enum Cmd {
         #[arg(long)]
         since: Option<String>,
         /// Confidence/credible level for the flaky view.
-        #[arg(long, default_value_t = 0.95)]
+        #[arg(long, default_value_t = 0.95, value_parser = unit_interval)]
         level: f64,
     },
     /// Enable rich per-test collection (writes a nextest JUnit profile).
@@ -115,6 +120,17 @@ enum Cmd {
     Cache,
     /// Show version and detected tooling.
     Info,
+}
+
+/// Parse a probability/confidence argument, rejecting values outside `0..=1`
+/// (and NaN) before they reach the statistics.
+fn unit_interval(s: &str) -> std::result::Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
+    if (0.0..=1.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!("must be between 0 and 1, got {v}"))
+    }
 }
 
 fn main() -> Result<()> {
@@ -139,9 +155,10 @@ fn main() -> Result<()> {
         Cmd::Build {
             since,
             all,
+            tests,
             cache,
             extra,
-        } => runner::build(since.as_deref(), all, cache, &extra),
+        } => runner::build(since.as_deref(), all, tests, cache, &extra),
         Cmd::Flaky { input, level, json } => runner::flaky(input.as_deref(), level, json),
         Cmd::Budget {
             fail_rate,

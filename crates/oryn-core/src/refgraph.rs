@@ -146,6 +146,39 @@ fn walk_items(items: &[syn::Item], file: &str, out: &mut Vec<Item>) {
     }
 }
 
+/// Collect `use path::Orig as Alias` renames from a parsed file as
+/// `(alias, original)` pairs. Without this, a function referencing `Alias`
+/// would miss the edge to the item actually named `Orig` — an unsound miss for
+/// `const`/`static`/`type` selection.
+fn collect_use_aliases(items: &[syn::Item], out: &mut Vec<(String, String)>) {
+    for it in items {
+        match it {
+            syn::Item::Use(u) => walk_use_tree(&u.tree, out),
+            syn::Item::Mod(m) => {
+                if let Some((_, items)) = &m.content {
+                    collect_use_aliases(items, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn walk_use_tree(tree: &syn::UseTree, out: &mut Vec<(String, String)>) {
+    match tree {
+        syn::UseTree::Path(p) => walk_use_tree(&p.tree, out),
+        syn::UseTree::Rename(r) => {
+            out.push((r.rename.to_string(), r.ident.to_string()));
+        }
+        syn::UseTree::Group(g) => {
+            for t in &g.items {
+                walk_use_tree(t, out);
+            }
+        }
+        syn::UseTree::Name(_) | syn::UseTree::Glob(_) => {}
+    }
+}
+
 fn impl_name(i: &syn::ItemImpl) -> String {
     if let syn::Type::Path(p) = &*i.self_ty {
         if let Some(seg) = p.path.segments.last() {
@@ -173,9 +206,15 @@ impl RefGraph {
     #[must_use]
     pub fn build(files: &[(String, String)]) -> Self {
         let mut items = Vec::new();
+        let mut alias_pairs: Vec<(String, String)> = Vec::new();
         for (file, src) in files {
             items.extend(Self::parse_items(file, src));
+            if let Ok(f) = syn::parse_file(src) {
+                collect_use_aliases(&f.items, &mut alias_pairs);
+            }
         }
+        // alias name -> original item name (e.g. `CAP` -> `LIMIT`).
+        let aliases: BTreeMap<String, String> = alias_pairs.into_iter().collect();
         let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (i, it) in items.iter().enumerate() {
             if !it.name.is_empty() {
@@ -185,8 +224,14 @@ impl RefGraph {
         let mut referenced_by = vec![Vec::new(); items.len()];
         for (i, it) in items.iter().enumerate() {
             for name in &it.refs {
-                if let Some(targets) = by_name.get(name) {
-                    for &j in targets {
+                // A referenced identifier resolves to an item by its own name,
+                // or — if it is a rename alias — by the original item's name.
+                let targets = by_name
+                    .get(name)
+                    .into_iter()
+                    .chain(aliases.get(name).and_then(|orig| by_name.get(orig)));
+                for target in targets {
+                    for &j in target {
                         if j != i {
                             referenced_by[j].push(i);
                         }
@@ -306,6 +351,20 @@ struct S { x: u32 }\n";
         // the struct is opaque
         let s = g.enclosing_nonfn("src/lib.rs", 12).unwrap();
         assert_eq!(g.kind(s), ItemKind::Opaque);
+    }
+
+    #[test]
+    fn use_rename_alias_preserves_const_edge() {
+        // `check` references LIMIT only through the alias CAP — the edge must
+        // still be found, or a change to LIMIT would wrongly skip check's test.
+        let src = "\
+const LIMIT: u32 = 10;\n\
+use crate::LIMIT as CAP;\n\
+fn check(x: u32) -> bool {\n    x < CAP\n}\n";
+        let g = RefGraph::build(&[("a.rs".to_string(), src.to_string())]);
+        let limit = g.items().iter().position(|i| i.name == "LIMIT").unwrap();
+        let fns = g.reverse_reachable_functions(&BTreeSet::from([limit]));
+        assert!(fns.iter().any(|(_, s, _)| *s == 3)); // check starts line 3
     }
 
     #[test]
