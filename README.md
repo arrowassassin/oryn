@@ -1,110 +1,90 @@
 # Oryn
 
-**The reproducibility & evaluation-integrity layer for AI — a non-AI tool that
-makes AI results you can reproduce, trust, and audit.**
+**Compile less, test less, trust the results.** A safe, Rust-native developer
+tool that runs only the tests your change can affect and scores flaky tests with
+real statistics — the things hyperscalers built internally and only paid tools
+(Gradle Develocity, CloudBees) sell, packaged free for any Cargo project.
 
-There is **no model in the loop anywhere in Oryn**. It is classical computer
-science — n-gram/MinHash matching, statistics, floating-point numerics, BLAKE3 +
-Ed25519 — applied to the one question every AI generator dodges: *is this result
-real, or is it noise, nondeterminism, or benchmark contamination?*
+No model in the loop — just classical, deterministic computer science.
 
-Three structural problems Oryn answers deterministically:
+## Why
 
-1. **Evals don't replicate.** The same model on the same benchmark is reported
-   with wildly different scores; most evals ship with no error bars at all.
-   Oryn attaches confidence intervals, statistical power, and a paired
-   **regression gate**.
-2. **Benchmarks are contaminated.** Test items leak into training corpora and
-   inflate scores. Oryn scans for verbatim (n-gram) and near-duplicate
-   (MinHash/LSH) contamination and emits a **clean held-out split**.
-3. **Inference isn't deterministic.** At temperature 0, batch size / tiling
-   changes the floating-point reduction order and flips tokens. Oryn analyzes
-   repeated generations and ships **batch-invariant kernels** (real CUDA, with a
-   tested CPU reference) that make the reduction order — and the output —
-   reproducible.
+- **`cargo test` runs everything**, even when you changed one crate. `cargo-nextest`
+  parallelizes but does **no** change-impact analysis. The only products that
+  select tests by impact are paid and platform-locked.
+- **Every runner calls a test "flaky" from a naive 2–3 rerun rule.** That's
+  statistically wrong: a test that fails 1% of the time needs ~300 reruns to be
+  seen failing once with 95% confidence. Nobody reports a flake *rate with a
+  confidence interval* or the rerun budget the math actually requires.
 
-Every report can be sealed into a tamper-evident, **Ed25519-signed hash chain**
-for audit (EU AI Act Art. 12/19 record-keeping).
+Oryn fills both gaps.
+
+## What it does
+
+### 1. Safe test-impact selection (`oryn affected`, `oryn test`)
+From a git diff, Oryn works out which workspace crates can possibly be affected —
+the changed crates **plus every crate that transitively depends on them** — and
+runs tests for only those. A docs-only change runs nothing; a change to a
+workspace-level file (`Cargo.lock`, root `Cargo.toml`, toolchain) safely forces a
+full run.
+
+This is **safe by construction** at crate granularity: a crate is Cargo's unit of
+compilation, so a crate's tests can only change if its own sources or one of its
+(transitive) dependencies changed. (The crate-level variant RustyRTS, ICST 2025,
+measured this at ~99.99% of failure-revealing tests selected.) It is conservative
+— it may over-select, never under-select.
+
+### 2. Statistically-rigorous flaky scoring (`oryn flaky`, `oryn budget`)
+Given rerun history, Oryn reports each test's **flake rate with a Wilson
+confidence interval** and the **rerun budget** required to confirm it
+(`n ≥ ln(1−γ)/ln(1−p)`), instead of a binary guess. It even tells you what a
+clean run *doesn't* prove ("20 passes only proves the flake rate is below 16%").
+
+### 3. Honest compile-time tuning (`oryn tune`)
+Nobody out-optimizes `rustc`, but the proven wins (fast linker, Cranelift dev
+backend, caching, crate splitting) are config most devs never enable. `oryn tune`
+detects what's available and tells you exactly what to turn on.
+
+## Quick start
+
+```bash
+cargo build --release
+
+# What would a full CI run vs. what's actually affected by my change?
+oryn affected                 # working tree vs HEAD
+oryn affected --since origin/main   # for a PR
+
+# Run only the affected crates' tests (skips the rest, safely):
+oryn test
+oryn test --since origin/main --nextest
+
+# Flaky-test statistics from rerun history ({"id","passes","fails"} JSONL):
+oryn flaky --input runs.jsonl
+
+# How many reruns to confirm a 1% flake at 95% confidence?
+oryn budget --fail-rate 0.01 --confidence 0.95   # -> 299
+
+# Detect compile-time speedups you haven't enabled:
+oryn tune
+```
+
+`oryn test` exits non-zero if the selected tests fail, so it drops straight into
+CI as a faster, safe replacement for `cargo test`.
 
 ## Workspace
 
 | Crate | What it is |
 |-------|------------|
-| [`oryn-core`](crates/oryn-core) | The engine: contamination scanning, statistically-rigorous evals + regression gate, determinism analysis, signed attestations, and the aggregate integrity report. Deterministic; no I/O hidden inside. |
-| [`oryn-cuda`](crates/oryn-cuda) | Batch-invariant numerical kernels. Real CUDA (`kernels/batch_invariant.cu`) compiled and linked when the `cuda` feature is set and `nvcc` is present; otherwise a **tested CPU reference** with identical semantics. |
-| [`oryn-server`](crates/oryn-server) | A UI-agnostic JSON HTTP API over the engine (axum) — a library, served via `oryn serve`, so any frontend can drive it. |
-| [`oryn-cli`](crates/oryn-cli) | The `oryn` command line — the single binary: `scan`, `eval`, `gate`, `determinism`, `keygen`, `attest`, `serve`, `info`. |
+| [`oryn-core`](crates/oryn-core) | The engine: workspace graph + safe selection (`graph`, `metadata`, `git`, `select`) and statistical flaky scoring (`flaky`, `stats`). Pure, deterministic, unit-tested. |
+| [`oryn-cli`](crates/oryn-cli) | The `oryn` binary. |
 
-## Quick start
+## Roadmap
 
-```bash
-# Build everything (CPU path; no GPU required).
-cargo build --release
-
-# Contamination-scan an eval set against a corpus.
-oryn scan --corpus examples/corpus.jsonl --eval examples/eval.jsonl --ngram 6
-
-# Eval with error bars + required sample size.
-oryn eval --run examples/baseline.jsonl
-
-# Paired regression gate (exits non-zero if the candidate regressed).
-oryn gate --baseline examples/baseline.jsonl --candidate examples/candidate.jsonl
-
-# Determinism analysis of repeated generations.
-oryn determinism --runs examples/generations.json
-
-# Run the HTTP API for a UI to call.
-oryn serve --addr 127.0.0.1:8787
-```
-
-### Data formats
-
-* **Documents** (`scan`): JSONL or a JSON array of `{"id","text"}`.
-* **Eval runs** (`eval`, `gate`): JSONL or a JSON array of `{"id","score"}`
-  (use `0`/`1` for accuracy-style scores; any real value works).
-* **Generations** (`determinism`): a JSON array of strings, or one per line.
-
-## HTTP API
-
-`oryn serve` exposes:
-
-| Method | Path | Body → Response |
-|--------|------|-----------------|
-| GET | `/api/health` | → `{status}` |
-| GET | `/api/info` | → versions + compute backend |
-| POST | `/api/scan` | `{corpus, eval, config?}` → contamination report |
-| POST | `/api/duplicates` | `{docs, config?}` → intra-set near-duplicates |
-| POST | `/api/eval` | `{run, config?}` → eval report (CI, power) |
-| POST | `/api/gate` | `{baseline, candidate, level?}` → regression gate |
-| POST | `/api/determinism` | `{outputs}` → determinism report |
-| POST | `/api/integrity` | integrity report → `{verdict, report}` |
-| POST | `/api/keygen` | → `{secret_hex, public_hex}` |
-| POST | `/api/attest/seal` | `{seed_hex?, entries}` → signed chain |
-| POST | `/api/attest/verify` | signed chain → `{ok, entries, error?}` |
-
-CORS is permissive so a browser UI can call it directly. A dedicated UI is
-designed separately and built against this API.
-
-## Building the CUDA kernels
-
-```bash
-# Requires nvcc on PATH and a CUDA-capable GPU at runtime.
-cargo build --release -p oryn-cuda --features cuda
-oryn info   # compute backend will report "cuda"
-```
-
-Without `nvcc`, the build prints a warning and uses the CPU reference path; the
-public API and results are identical (the reference mirrors the kernels'
-fixed-reduction-order semantics).
-
-## Design principles
-
-* **Deterministic by construction** — same input, same bytes out, on any
-  machine. Hashing is fixed-seeded; the bootstrap is seeded; map iteration is
-  sorted before output.
-* **No model in the loop** — verification you can trust must not reintroduce the
-  failure mode (a hallucinating judge) it is trying to catch.
-* **Auditable** — every result can be signed and chained.
+- **Function-level selection** (MIR call-graph, RustyRTS-style) for finer skips.
+- **Correct content-addressed build/test caching** with early-cutoff and
+  hermeticity checks — fixing the unsound blind spots of `sccache`.
+- **Safe batching + bisection** for suites too coupled to select.
+- Per-test history collection so flaky scoring and prioritization run automatically.
 
 ## License
 

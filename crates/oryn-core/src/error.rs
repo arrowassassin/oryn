@@ -5,14 +5,14 @@ use thiserror::Error;
 /// Result alias used throughout the engine.
 pub type Result<T> = std::result::Result<T, OrynError>;
 
-/// Errors produced by the reproducibility / evaluation-integrity engine.
+/// Errors produced by the engine.
 #[derive(Debug, Error)]
 pub enum OrynError {
     /// Caller supplied an empty or otherwise unusable dataset.
     #[error("empty input: {0}")]
     EmptyInput(String),
 
-    /// Two datasets that must align (e.g. paired eval) had mismatched lengths.
+    /// Two datasets that must align had mismatched lengths.
     #[error("length mismatch: {0}")]
     LengthMismatch(String),
 
@@ -20,19 +20,15 @@ pub enum OrynError {
     #[error("invalid parameter: {0}")]
     InvalidParameter(String),
 
+    /// A subprocess (cargo/git) failed.
+    #[error("{0}")]
+    Process(String),
+
     /// JSON (de)serialization failure.
     #[error("serde: {0}")]
     Serde(#[from] serde_json::Error),
 
-    /// An attestation chain failed verification.
-    #[error("attestation verification failed: {0}")]
-    Attestation(String),
-
-    /// Cryptographic signature error.
-    #[error("signature: {0}")]
-    Signature(String),
-
-    /// Hex decoding error (keys, signatures).
-    #[error("hex decode: {0}")]
-    Hex(#[from] hex::FromHexError),
+    /// I/O error.
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
 }

@@ -1,6 +1,6 @@
 [package]
 name = "oryn-core"
-description = "Oryn — deterministic reproducibility & evaluation-integrity engine for AI (contamination scanning, statistically-rigorous evals, determinism analysis, signed attestations). No model in the loop."
+description = "Oryn engine — safe Rust test-impact selection and statistically-rigorous flaky-test scoring. Compile less, test less, trust the results."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -14,12 +14,5 @@ workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-blake3.workspace = true
-ed25519-dalek.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
-ahash.workspace = true
-rayon.workspace = true
-hex.workspace = true
-
-[dev-dependencies]

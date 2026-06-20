@@ -1,6 +1,6 @@
 [package]
 name = "oryn-cli"
-description = "Oryn command-line: contamination scanning, rigorous evals, determinism analysis, and signed attestations."
+description = "Oryn command line — safe test-impact selection, statistical flaky scoring, and compile-time tuning for Cargo projects."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -16,10 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 oryn-core.workspace = true
-oryn-cuda.workspace = true
-oryn-server.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 clap.workspace = true
-tokio.workspace = true
