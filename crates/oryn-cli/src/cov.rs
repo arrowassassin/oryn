@@ -24,12 +24,6 @@ fn is_hex_oid(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Is repo-relative path `f` at or under directory `dir` (path-component safe,
-/// so `crates/app-utils` is not treated as under `crates/app`)?
-fn path_under(f: &str, dir: &str) -> bool {
-    dir.is_empty() || f == dir || f.starts_with(&format!("{dir}/"))
-}
-
 fn rustc_print(arg: &str) -> Result<String> {
     let out = Command::new("rustc").args(["--print", arg]).output()?;
     if !out.status.success() {
@@ -150,6 +144,75 @@ fn relativize(abs: &str, root: &Path) -> Option<String> {
         .map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
+/// Per-file executed line sets for one test.
+type FileLines = BTreeMap<String, BTreeSet<usize>>;
+
+/// One unit of coverage work: run `test` from `bin` in isolation and export it.
+struct CovTask {
+    /// Store key (`crate::test`).
+    id: String,
+    /// Instrumented test binary.
+    bin: PathBuf,
+    /// Exact test name.
+    test: String,
+    /// Unique index, for collision-free temp filenames under parallelism.
+    slot: usize,
+}
+
+/// Run one test under coverage and return its executed lines (repo-relative).
+/// Returns `None` (uncovered → conservatively re-run later) on any failure.
+fn cover_one_test(
+    task: &CovTask,
+    tmp: &Path,
+    profdata_tool: &Path,
+    cov_tool: &Path,
+    cwd: &Path,
+    root: &Path,
+) -> Option<FileLines> {
+    let profraw = tmp.join(format!("cov-{}.profraw", task.slot));
+    let profdata = tmp.join(format!("cov-{}.profdata", task.slot));
+    let _ = std::fs::remove_file(&profraw);
+
+    let status = Command::new(&task.bin)
+        .args(["--exact", &task.test])
+        .env("LLVM_PROFILE_FILE", &profraw)
+        .current_dir(cwd)
+        .status()
+        .ok()?;
+    if !status.success() || !profraw.exists() {
+        return None; // failing/aborting test: leave it uncovered (safe)
+    }
+    if !Command::new(profdata_tool)
+        .args(["merge", "-sparse"])
+        .arg(&profraw)
+        .arg("-o")
+        .arg(&profdata)
+        .status()
+        .ok()?
+        .success()
+    {
+        return None;
+    }
+    let export = Command::new(cov_tool)
+        .arg("export")
+        .arg(format!("--instr-profile={}", profdata.display()))
+        .args(["--format=text"])
+        .arg(&task.bin)
+        .output()
+        .ok()?;
+    if !export.status.success() {
+        return None;
+    }
+    let executed = coverage::parse_export(&export.stdout).ok()?;
+    let mut files: FileLines = BTreeMap::new();
+    for (abs, lines) in executed {
+        if let Some(rel) = relativize(&abs, root) {
+            files.insert(rel, lines);
+        }
+    }
+    Some(files)
+}
+
 /// `oryn cover`
 pub fn cover(since: Option<&str>) -> Result<()> {
     let cwd = std::env::current_dir()?;
@@ -178,55 +241,56 @@ pub fn cover(since: Option<&str>) -> Result<()> {
     let store_dir = Store::dir_for(&graph.root);
     let mut st = Store::load(&store_dir)?;
 
-    let mut total = 0usize;
+    // Gather every (test → its instrumented binary) task. Building the
+    // instrumented binaries is serial (a cargo compile); the expensive part is
+    // the per-test run + llvm-profdata + llvm-cov export, which is independent
+    // per test and run in parallel below.
+    let mut tasks: Vec<CovTask> = Vec::new();
     for crate_name in &crates {
         eprintln!("oryn cover: instrumenting {crate_name}…");
         let bins = test_binaries(&cwd, crate_name, true)?;
         for bin in &bins {
             for test in list_tests(bin)? {
-                let safe = test.replace([':', '/', ' '], "_");
-                let profraw = tmp.join(format!("{crate_name}-{safe}.profraw"));
-                let profdata = tmp.join(format!("{crate_name}-{safe}.profdata"));
-                let _ = std::fs::remove_file(&profraw);
-
-                let status = Command::new(bin)
-                    .args(["--exact", &test])
-                    .env("LLVM_PROFILE_FILE", &profraw)
-                    .current_dir(&cwd)
-                    .status()?;
-                if !status.success() || !profraw.exists() {
-                    continue; // failing/aborting test: leave it uncovered (safe)
-                }
-                if !Command::new(&profdata_tool)
-                    .args(["merge", "-sparse"])
-                    .arg(&profraw)
-                    .arg("-o")
-                    .arg(&profdata)
-                    .status()?
-                    .success()
-                {
-                    continue;
-                }
-                let export = Command::new(&cov_tool)
-                    .arg("export")
-                    .arg(format!("--instr-profile={}", profdata.display()))
-                    .args(["--format=text"])
-                    .arg(bin)
-                    .output()?;
-                if !export.status.success() {
-                    continue;
-                }
-                let executed = coverage::parse_export(&export.stdout)?;
-                let mut files: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
-                for (abs, lines) in executed {
-                    if let Some(rel) = relativize(&abs, &root) {
-                        files.insert(rel, lines);
-                    }
-                }
-                st.set_coverage(&format!("{crate_name}::{test}"), files);
-                total += 1;
+                let slot = tasks.len();
+                tasks.push(CovTask {
+                    id: format!("{crate_name}::{test}"),
+                    bin: bin.clone(),
+                    test,
+                    slot,
+                });
             }
         }
+    }
+
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(tasks.len().max(1));
+    eprintln!(
+        "oryn cover: collecting coverage for {} test(s) on {workers} worker(s)…",
+        tasks.len()
+    );
+
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: std::sync::Mutex<Vec<(String, FileLines)>> = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(task) = tasks.get(i) else { break };
+                if let Some(files) =
+                    cover_one_test(task, &tmp, &profdata_tool, &cov_tool, &cwd, &root)
+                {
+                    results.lock().unwrap().push((task.id.clone(), files));
+                }
+            });
+        }
+    });
+
+    let results = results.into_inner().unwrap();
+    let total = results.len();
+    for (id, files) in results {
+        st.set_coverage(&id, files);
     }
 
     st.coverage_base = Some(head_commit(&cwd)?);
@@ -261,14 +325,21 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
     }
 
     let now = store::now_unix();
+
+    // Coverage is a *cross-crate* execution trace, so impact must be computed
+    // GLOBALLY: a dependent crate's test that executed changed code in another
+    // crate has to be selected too. Analyze every hunk once against the repo's
+    // base sources (one reference graph spanning the whole workspace).
+    let base_files = repo_base_files(&cwd, &base)?;
+    let impact = hybrid::analyze(&base_files, &hunks);
+    if matches!(impact, HybridImpact::WholeCrate) {
+        eprintln!("oryn fn: non-localizable change — selecting every affected crate's tests");
+    }
+
     let mut overall_fail = false;
     let mut ran_any = false;
 
     for crate_name in &plan.affected_crates {
-        let idx = graph.index_of(crate_name).unwrap();
-        let crate_dir = &graph.members[idx].manifest_dir;
-        let crate_rel = relativize(&crate_dir.to_string_lossy(), &root).unwrap_or_default();
-
         // Universe of this crate's tests (current).
         let bins = test_binaries(&cwd, crate_name, false)?;
         let mut names = Vec::new();
@@ -283,20 +354,12 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
             .filter_map(|id| st.coverage.get(id).map(|c| (id.clone(), c.clone())))
             .collect();
 
-        // Hybrid impact: coverage for function-body changes + the static
-        // reference graph for const/static/type changes.
-        let crate_hunks: BTreeMap<String, Vec<difflines::Hunk>> = hunks
-            .iter()
-            .filter(|(f, _)| path_under(f, &crate_rel))
-            .map(|(f, h)| (f.clone(), h.clone()))
-            .collect();
-        let base_files = crate_base_files(&cwd, &base, &crate_rel)?;
-        let run_ids: Vec<String> = match hybrid::analyze(&base_files, &crate_hunks) {
-            HybridImpact::WholeCrate => {
-                eprintln!("oryn fn: {crate_name} — non-localizable change, running whole crate");
-                ids.clone()
-            }
-            HybridImpact::PerFile(impacts) => fnselect::select(&impacts, &coverage, &ids).run,
+        // Select this crate's tests against the GLOBAL impact: a test runs if its
+        // (cross-crate) coverage intersects an impacted line, it has no coverage
+        // record, or the change couldn't be localized.
+        let run_ids: Vec<String> = match &impact {
+            HybridImpact::WholeCrate => ids.clone(),
+            HybridImpact::PerFile(impacts) => fnselect::select(impacts, &coverage, &ids).run,
         };
 
         // Always rerun flaky tests — coverage is one execution and can be unsound
@@ -360,10 +423,13 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// All `.rs` source files of a crate at the base revision, as `(rel, source)`.
-fn crate_base_files(dir: &Path, base: &str, crate_rel: &str) -> Result<Vec<(String, String)>> {
+/// Every tracked `.rs` file in the repo at the base revision, as `(rel, source)`.
+/// One reference graph over the whole workspace is what makes cross-crate impact
+/// (a dependent crate referencing a changed `const`, or executing changed code)
+/// sound — analyzing per-crate would miss those edges.
+fn repo_base_files(dir: &Path, base: &str) -> Result<Vec<(String, String)>> {
     let out = Command::new("git")
-        .args(["ls-tree", "-r", "--name-only", base, "--", crate_rel])
+        .args(["ls-tree", "-r", "--name-only", base])
         .current_dir(dir)
         .output()?;
     let mut files = Vec::new();

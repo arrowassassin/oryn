@@ -32,8 +32,13 @@ Speed and correctness pull against each other, so each lever is deliberate:
    **Function-level selection (`oryn cover` + `oryn test --fn`).** Finer than
    crate-level and sound on *stable* Rust — a **hybrid** of dynamic coverage and
    static analysis. `oryn cover` runs each test under `-C instrument-coverage` and
-   records the exact source lines it executes. Then `oryn test --fn` diffs against
-   that base and classifies every changed line three ways:
+   records the exact source lines it executes (in parallel across cores — on
+   ripgrep's 1,139 tests it completes in ~2.5 min where a serial pass doesn't
+   finish in 6). Then `oryn test --fn` diffs against that base, builds **one
+   reference graph spanning the whole workspace**, and computes a single *global*
+   impact set — so a dependent crate's test that executed changed code in another
+   crate is correctly selected (coverage is a cross-crate trace). Each changed
+   line is classified three ways:
    - **Inside a function** → mapped to that function's `syn` span (so an insertion
      *inside* a covered function is caught, where naive line-matching misses it),
      then intersected with per-test coverage. Because coverage is a full execution
@@ -48,8 +53,10 @@ Speed and correctness pull against each other, so each lever is deliberate:
 
    On top of selection, **flaky tests are always re-run** — a coverage trace is a
    single execution and can be unsound under nondeterminism, and the flaky
-   subsystem flags exactly those tests. *Demonstrated: editing one function
-   selected 3 of 68 tests; editing a `const` selected only its dependent tests.*
+   subsystem flags exactly those tests. *Demonstrated on ripgrep (10 crates,
+   1,139 tests): editing one `globset` function selected 250 tests across the
+   edited crate and its dependents — correctly including `ignore`'s tests that
+   exercise it, and correctly skipping `ripgrep`'s that don't.*
 
 2. **Don't re-run known-green tests (sound result cache).** Oryn computes a
    **Merkle fingerprint** of each crate's entire dependency-closure — *every*
