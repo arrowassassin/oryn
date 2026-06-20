@@ -1,15 +1,24 @@
 //! Content fingerprinting of a crate and its dependency closure.
 //!
-//! A crate's test outcome is a pure function of: its own sources, the sources of
-//! every crate it (transitively) depends on, and the compiler. We capture that
-//! with a **Merkle fingerprint**: `fp(c) = H(salt ‖ own(c) ‖ fp(d₁) ‖ … ‖ fp(dₙ))`
-//! over the crate's workspace dependencies `dᵢ`.
+//! A crate's test outcome is a pure function of: its own files, the files of
+//! every crate it (transitively) depends on, the exact set of external
+//! dependency versions (the lockfile), and the compiler. We capture that with a
+//! **Merkle fingerprint**: `fp(c) = H(salt ‖ own(c) ‖ fp(d₁) ‖ … ‖ fp(dₙ))` over
+//! the crate's workspace dependencies `dᵢ`, where `salt` folds in the `rustc`
+//! version *and* the workspace `Cargo.lock` (so a `cargo update` that bumps a
+//! transitive crates.io dependency — changing no crate's own sources — still
+//! invalidates every fingerprint).
 //!
-//! If — and only if — a crate or anything in its dependency closure changes, its
-//! fingerprint changes. That is exactly the soundness condition for **caching
-//! test results**: a crate whose fingerprint matches a previously-recorded green
-//! run cannot have a different test outcome (modulo flakiness, handled
-//! separately), so its tests can be skipped.
+//! `own(c)` hashes **every** file under the crate (not just `*.rs`), so assets
+//! pulled in by `include_str!`/`include_bytes!`, `build.rs` inputs, fixtures,
+//! etc. are covered too. This over-approximates (editing a crate's `README`
+//! re-runs its tests) — the safe direction, matching the rest of the tool.
+//!
+//! If — and only if — a crate, anything in its dependency closure, the lockfile,
+//! or the compiler changes, its fingerprint changes. That is exactly the
+//! soundness condition for **caching test results**: a crate whose fingerprint
+//! matches a previously-recorded green run cannot have a different test outcome
+//! (modulo flakiness, handled separately), so its tests can be skipped.
 
 use crate::graph::WorkspaceGraph;
 use std::collections::BTreeMap;
@@ -47,10 +56,11 @@ pub fn to_hex(d: &Digest) -> String {
     s
 }
 
-/// Compute the digest of a crate's *own* tracked source files: every `*.rs`
-/// file plus `Cargo.toml` and `build.rs` under `manifest_dir`, excluding any
-/// nested `target/` directory and hidden directories. Files are hashed in a
-/// path-sorted, deterministic order.
+/// Compute the digest of a crate's *own* files: every regular file under
+/// `manifest_dir`, excluding any nested `target/` directory and hidden
+/// directories. Hashing all files (not just `*.rs`) keeps the cache sound for
+/// crates that embed assets via `include_str!`/`include_bytes!` or read inputs
+/// in `build.rs`. Files are hashed in a path-sorted, deterministic order.
 ///
 /// # Errors
 /// Propagates I/O errors walking or reading the tree.
@@ -67,10 +77,6 @@ pub fn crate_own_digest(manifest_dir: &Path) -> io::Result<Digest> {
     Ok(*hasher.finalize().as_bytes())
 }
 
-fn is_source(name: &str) -> bool {
-    name.ends_with(".rs") || name == "Cargo.toml"
-}
-
 fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, Digest)>) -> io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
@@ -82,7 +88,7 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, Digest)>) -> io::Resu
                 continue;
             }
             collect(root, &path, out)?;
-        } else if is_source(&name) {
+        } else {
             let rel = path
                 .strip_prefix(root)
                 .unwrap_or(&path)
@@ -160,7 +166,20 @@ pub fn compute(
     for m in &graph.members {
         own.insert(m.name.clone(), crate_own_digest(&m.manifest_dir)?);
     }
-    Ok(merkle_fingerprints(graph, &own, rustc_version.as_bytes()))
+    // Fold the workspace lockfile into the global salt: a dependency-version
+    // change (e.g. `cargo update`) alters no crate's own sources but can change
+    // any crate's test outcome, so it must invalidate every fingerprint. A
+    // missing lockfile (rare for an app, normal for a library) contributes a
+    // fixed sentinel rather than failing.
+    let lock_digest = match std::fs::read(graph.root.join("Cargo.lock")) {
+        Ok(bytes) => hash_bytes(&bytes),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => [0u8; 32],
+        Err(e) => return Err(e),
+    };
+    let mut salt = Vec::with_capacity(rustc_version.len() + 32);
+    salt.extend_from_slice(rustc_version.as_bytes());
+    salt.extend_from_slice(&lock_digest);
+    Ok(merkle_fingerprints(graph, &own, &salt))
 }
 
 #[cfg(test)]
@@ -255,5 +274,36 @@ mod tests {
         std::fs::write(dir.path().join("target/junk.rs"), b"ignored").unwrap();
         let d3 = crate_own_digest(dir.path()).unwrap();
         assert_eq!(d2, d3);
+        // A non-.rs asset (e.g. something `include_str!`-ed) is hashed too.
+        std::fs::write(dir.path().join("src/template.html"), b"<p>v1</p>").unwrap();
+        let d4 = crate_own_digest(dir.path()).unwrap();
+        assert_ne!(d3, d4);
+        std::fs::write(dir.path().join("src/template.html"), b"<p>v2</p>").unwrap();
+        let d5 = crate_own_digest(dir.path()).unwrap();
+        assert_ne!(d4, d5);
+    }
+
+    #[test]
+    fn lockfile_change_invalidates_all_fingerprints() {
+        let ws = tempfile::tempdir().unwrap();
+        let croot = ws.path().join("c");
+        std::fs::create_dir_all(croot.join("src")).unwrap();
+        std::fs::write(croot.join("Cargo.toml"), b"[package]\nname=\"c\"").unwrap();
+        std::fs::write(croot.join("src/lib.rs"), b"pub fn a() {}").unwrap();
+        std::fs::write(ws.path().join("Cargo.lock"), b"# lock v1").unwrap();
+
+        let g = WorkspaceGraph::new(
+            ws.path().to_path_buf(),
+            vec![Member {
+                name: "c".into(),
+                manifest_dir: croot.clone(),
+                deps: vec![],
+            }],
+        );
+        let before = compute(&g, "rustc-x").unwrap();
+        // `cargo update` rewrites only the lockfile — no crate source changes.
+        std::fs::write(ws.path().join("Cargo.lock"), b"# lock v2").unwrap();
+        let after = compute(&g, "rustc-x").unwrap();
+        assert_ne!(before["c"], after["c"]);
     }
 }

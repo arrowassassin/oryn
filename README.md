@@ -52,8 +52,10 @@ Speed and correctness pull against each other, so each lever is deliberate:
    selected 3 of 68 tests; editing a `const` selected only its dependent tests.*
 
 2. **Don't re-run known-green tests (sound result cache).** Oryn computes a
-   **Merkle fingerprint** of each crate's entire dependency-closure of sources
-   plus the exact `rustc` version. Matching fingerprint ⇒ the tests *cannot* have
+   **Merkle fingerprint** of each crate's entire dependency-closure — *every*
+   file in the crate (so `include_str!` assets and `build.rs` inputs count, not
+   just `*.rs`), the workspace `Cargo.lock` (so a `cargo update` invalidates it),
+   and the exact `rustc` version. Matching fingerprint ⇒ the tests *cannot* have
    a different outcome ⇒ skip them. This is the millisecond warm loop.
 
 3. **Stand on a correct compile cache, don't reinvent it.** A subtly-wrong
@@ -125,10 +127,11 @@ For PRs, use `--since origin/main`.
 
 ## Soundness notes
 
-- The green-cache fingerprint captures **source closure + `rustc` version**. Tests
-  depending on un-captured runtime state (network, wall-clock, ambient env) are
-  not perfectly hermetic; the flaky subsystem surfaces such tests, and
-  `--no-cache` forces a full re-run.
+- The green-cache fingerprint captures **the full file closure + `Cargo.lock` +
+  `rustc` version**. Tests depending on un-captured runtime state (network,
+  wall-clock, ambient env, files outside the crate dir) are not perfectly
+  hermetic; the flaky subsystem surfaces such tests, and `--no-cache` forces a
+  full re-run.
 - Crate-level selection is the safe default.
 
 ## Roadmap
