@@ -22,10 +22,14 @@
 
 pub mod bayes;
 pub mod bisect;
+pub mod coverage;
 pub mod dashboard;
+pub mod difflines;
 pub mod error;
 pub mod fingerprint;
 pub mod flaky;
+pub mod fnselect;
+pub mod fnspans;
 pub mod git;
 pub mod graph;
 pub mod junit;

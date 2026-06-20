@@ -18,6 +18,8 @@ rand.workspace = true
 rand_chacha.workspace = true
 blake3.workspace = true
 quick-xml.workspace = true
+syn.workspace = true
+proc-macro2.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

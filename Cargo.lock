@@ -478,11 +478,13 @@ name = "oryn-core"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "proc-macro2",
  "quick-xml",
  "rand",
  "rand_chacha",
  "serde",
  "serde_json",
+ "syn",
  "tempfile",
  "thiserror",
 ]

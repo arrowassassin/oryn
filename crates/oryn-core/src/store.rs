@@ -76,6 +76,12 @@ pub struct Store {
     /// Test id -> history.
     #[serde(default)]
     pub tests: BTreeMap<String, TestRecord>,
+    /// Git commit the per-test coverage was collected against.
+    #[serde(default)]
+    pub coverage_base: Option<String>,
+    /// Test id -> (source file → executed lines), for function-level selection.
+    #[serde(default)]
+    pub coverage: BTreeMap<String, BTreeMap<String, std::collections::BTreeSet<usize>>>,
 }
 
 impl Store {
@@ -148,6 +154,15 @@ impl Store {
             .entry(id.to_string())
             .or_default()
             .observe(passed, now, duration_ms);
+    }
+
+    /// Record the executed-line coverage of a single test.
+    pub fn set_coverage(
+        &mut self,
+        id: &str,
+        files: BTreeMap<String, std::collections::BTreeSet<usize>>,
+    ) {
+        self.coverage.insert(id.to_string(), files);
     }
 }
 

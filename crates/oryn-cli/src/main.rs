@@ -1,5 +1,6 @@
 //! `oryn` — compile less, test less, trust the results.
 
+mod cov;
 mod render;
 mod runner;
 mod tui;
@@ -46,9 +47,19 @@ enum Cmd {
         /// Use sccache as the compile cache (RUSTC_WRAPPER) if available.
         #[arg(long)]
         cache: bool,
+        /// Function-level selection: run only tests whose recorded coverage
+        /// intersects the change (needs `oryn cover` first).
+        #[arg(long = "fn")]
+        function: bool,
         /// Extra args passed through to the test runner (after `--`).
         #[arg(last = true)]
         extra: Vec<String>,
+    },
+    /// Record per-test coverage for function-level selection (`oryn cover`).
+    Cover {
+        /// Limit to crates affected since this git ref (default: all).
+        #[arg(long)]
+        since: Option<String>,
     },
     /// Build only the affected crates (a faster `cargo build`).
     Build {
@@ -115,8 +126,16 @@ fn main() -> Result<()> {
             all,
             no_cache,
             cache,
+            function,
             extra,
-        } => runner::test(since.as_deref(), all, no_cache, cache, &extra),
+        } => {
+            if function {
+                cov::test_fn(&extra)
+            } else {
+                runner::test(since.as_deref(), all, no_cache, cache, &extra)
+            }
+        }
+        Cmd::Cover { since } => cov::cover(since.as_deref()),
         Cmd::Build {
             since,
             all,
