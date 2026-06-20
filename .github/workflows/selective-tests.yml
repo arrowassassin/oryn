@@ -22,7 +22,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.96.0
       - uses: Swatinem/rust-cache@v2
       - name: Build oryn
-        run: cargo build --release -p oryn-cli
+        run: cargo build --release -p oryn
       - name: Show what this PR affects
         run: ./target/release/oryn affected --since "origin/${{ github.base_ref }}"
       - name: Run only the affected crates' tests

@@ -53,7 +53,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mold clang
 
       - name: Build oryn (release)
-        run: cargo build --release -p oryn-cli
+        run: cargo build --release -p oryn
 
       - name: Clone target (${{ matrix.name }})
         run: git clone --depth 1 "${{ matrix.url }}" /tmp/target

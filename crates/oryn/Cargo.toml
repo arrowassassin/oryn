@@ -1,10 +1,14 @@
 [package]
-name = "oryn-cli"
-description = "Oryn command line — safe test-impact selection, statistical flaky scoring, and compile-time tuning for Cargo projects."
+name = "oryn"
+description = "Compile less, test less, trust the results — safe test-impact selection, statistical flaky scoring, and compile-time tuning for Cargo workspaces."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 rust-version.workspace = true
 
 [lints]
