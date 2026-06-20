@@ -3,11 +3,12 @@
 //! A crate's test outcome is a pure function of: its own files, the files of
 //! every crate it (transitively) depends on, the exact set of external
 //! dependency versions (the lockfile), and the compiler. We capture that with a
-//! **Merkle fingerprint**: `fp(c) = H(salt ‖ own(c) ‖ fp(d₁) ‖ … ‖ fp(dₙ))` over
-//! the crate's workspace dependencies `dᵢ`, where `salt` folds in the `rustc`
-//! version *and* the workspace `Cargo.lock` (so a `cargo update` that bumps a
-//! transitive crates.io dependency — changing no crate's own sources — still
-//! invalidates every fingerprint).
+//! **Merkle fingerprint**: `fp(c) = H(domain ‖ own(c) ‖ fp(d₁) ‖ … ‖ fp(dₙ))`
+//! over the crate's workspace dependencies `dᵢ`, where `domain` is a
+//! domain-separation prefix folding in the `rustc` version *and* the workspace
+//! `Cargo.lock` (so a `cargo update` that bumps a transitive crates.io
+//! dependency — changing no crate's own sources — still invalidates every
+//! fingerprint). It is a deterministic content prefix, **not** a secret salt.
 //!
 //! `own(c)` hashes **every** file under the crate (not just `*.rs`), so assets
 //! pulled in by `include_str!`/`include_bytes!`, `build.rs` inputs, fixtures,
@@ -123,18 +124,21 @@ fn rel_path(root: &Path, path: &Path) -> String {
 /// Combine per-crate own-digests into Merkle fingerprints over the dependency
 /// closure. Pure (no I/O) so it is exhaustively testable.
 ///
-/// `salt` should encode anything global that affects compilation (e.g. the
-/// `rustc -vV` string). Returns hex fingerprints keyed by crate name.
+/// `domain` is a **domain-separation prefix** mixed into every digest — it
+/// encodes anything global that affects compilation (e.g. the `rustc -vV`
+/// string and the lockfile). It is *not* a cryptographic salt: it must be
+/// deterministic, since the whole point is a reproducible content fingerprint.
+/// Returns hex fingerprints keyed by crate name.
 #[must_use]
 pub fn merkle_fingerprints(
     graph: &WorkspaceGraph,
     own: &BTreeMap<String, Digest>,
-    salt: &[u8],
+    domain: &[u8],
 ) -> BTreeMap<String, String> {
     let mut memo: BTreeMap<String, Digest> = BTreeMap::new();
     let mut out = BTreeMap::new();
     for m in &graph.members {
-        let d = resolve(&m.name, graph, own, salt, &mut memo);
+        let d = resolve(&m.name, graph, own, domain, &mut memo);
         out.insert(m.name.clone(), to_hex(&d));
     }
     out
@@ -144,7 +148,7 @@ fn resolve(
     name: &str,
     graph: &WorkspaceGraph,
     own: &BTreeMap<String, Digest>,
-    salt: &[u8],
+    domain: &[u8],
     memo: &mut BTreeMap<String, Digest>,
 ) -> Digest {
     if let Some(d) = memo.get(name) {
@@ -157,13 +161,13 @@ fn resolve(
 
     let idx = graph.index_of(name);
     let mut hasher = blake3::Hasher::new();
-    hasher.update(salt);
+    hasher.update(domain);
     if let Some(i) = idx {
         hasher.update(own.get(name).unwrap_or(&[0u8; 32]));
         let mut deps = graph.members[i].deps.clone();
         deps.sort();
         for dep in &deps {
-            let dd = resolve(dep, graph, own, salt, memo);
+            let dd = resolve(dep, graph, own, domain, memo);
             hasher.update(dep.as_bytes());
             hasher.update(&dd);
         }
@@ -173,8 +177,8 @@ fn resolve(
     digest
 }
 
-/// Compute fingerprints for every crate in `graph` from the filesystem, salted
-/// with `rustc_version`.
+/// Compute fingerprints for every crate in `graph` from the filesystem,
+/// domain-separated by `rustc_version` (plus the lockfile and RUSTFLAGS).
 ///
 /// # Errors
 /// Propagates I/O errors reading crate sources.
@@ -197,28 +201,28 @@ pub fn compute(
         }
         Ok(own)
     })?;
-    // Fold the workspace lockfile into the global salt: a dependency-version
-    // change (e.g. `cargo update`) alters no crate's own sources but can change
-    // any crate's test outcome, so it must invalidate every fingerprint. A
-    // missing lockfile (rare for an app, normal for a library) contributes a
-    // fixed sentinel rather than failing.
+    // Fold the workspace lockfile into the global domain prefix: a
+    // dependency-version change (e.g. `cargo update`) alters no crate's own
+    // sources but can change any crate's test outcome, so it must invalidate
+    // every fingerprint. A missing lockfile (rare for an app, normal for a
+    // library) contributes a fixed sentinel rather than failing.
     let lock_digest = match std::fs::read(graph.root.join("Cargo.lock")) {
         Ok(bytes) => hash_bytes(&bytes),
         Err(e) if e.kind() == io::ErrorKind::NotFound => [0u8; 32],
         Err(e) => return Err(e),
     };
     // Compilation flags change codegen without touching any source. Fold the
-    // ambient RUSTFLAGS (both spellings) into the salt so a flags change
-    // invalidates the cache.
+    // ambient RUSTFLAGS (both spellings) into the domain prefix so a flags
+    // change invalidates the cache.
     let rustflags = std::env::var("CARGO_ENCODED_RUSTFLAGS")
         .or_else(|_| std::env::var("RUSTFLAGS"))
         .unwrap_or_default();
-    let mut salt = Vec::with_capacity(rustc_version.len() + 64);
-    salt.extend_from_slice(rustc_version.as_bytes());
-    salt.extend_from_slice(&lock_digest);
-    salt.push(0);
-    salt.extend_from_slice(rustflags.as_bytes());
-    Ok(merkle_fingerprints(graph, &own, &salt))
+    let mut domain = Vec::with_capacity(rustc_version.len() + 64);
+    domain.extend_from_slice(rustc_version.as_bytes());
+    domain.extend_from_slice(&lock_digest);
+    domain.push(0);
+    domain.extend_from_slice(rustflags.as_bytes());
+    Ok(merkle_fingerprints(graph, &own, &domain))
 }
 
 #[cfg(test)]
