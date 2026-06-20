@@ -73,6 +73,8 @@ pub struct FlakeScore {
     pub reruns_to_reproduce_95: Option<u64>,
     /// Upper bound of the CI — "we've only proven the flake rate is below this".
     pub proven_below: f64,
+    /// Bayesian (Jeffreys-prior) posterior on the flake rate.
+    pub posterior: crate::bayes::Posterior,
 }
 
 /// Reruns needed to observe at least one failure with confidence `gamma`, given
@@ -122,6 +124,7 @@ pub fn score(runs: &TestRuns, level: f64) -> FlakeScore {
         verdict,
         reruns_to_reproduce_95: reruns,
         proven_below: ci.high,
+        posterior: crate::bayes::jeffreys(runs.fails, runs.passes, level),
     }
 }
 

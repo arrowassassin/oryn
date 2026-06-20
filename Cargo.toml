@@ -23,6 +23,8 @@ thiserror = "2.0"
 anyhow = "1.0"
 rand = "0.8"
 rand_chacha = "0.3"
+blake3 = "1.5"
+quick-xml = "0.36"
 clap = { version = "4.5", features = ["derive"] }
 
 [profile.release]

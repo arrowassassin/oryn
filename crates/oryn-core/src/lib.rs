@@ -20,13 +20,19 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bayes;
 pub mod error;
+pub mod fingerprint;
 pub mod flaky;
 pub mod git;
 pub mod graph;
+pub mod junit;
 pub mod metadata;
+pub mod prioritize;
+pub mod runner;
 pub mod select;
 pub mod stats;
+pub mod store;
 
 pub use error::{OrynError, Result};
 
