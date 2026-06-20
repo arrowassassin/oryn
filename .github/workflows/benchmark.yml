@@ -1,0 +1,55 @@
+name: benchmark
+
+# Manual, on-demand benchmark of oryn against a real Cargo workspace.
+# Run it from the Actions tab ("Run workflow"); pick any repo URL.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Git URL of a Cargo workspace to benchmark"
+        required: false
+        default: "https://github.com/BurntSushi/ripgrep"
+      with_fn:
+        description: "Also benchmark coverage + --fn (slow)"
+        type: boolean
+        default: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the toolchain; add the coverage component to it.
+      - name: Add llvm-tools (for `oryn cover`)
+        run: rustup component add llvm-tools-preview
+
+      - name: Install mold + clang (so the linker lever is measurable)
+        run: sudo apt-get update && sudo apt-get install -y mold clang
+
+      - name: Build oryn (release)
+        run: cargo build --release -p oryn-cli
+
+      - name: Clone the target workspace
+        run: git clone --depth 1 "${{ inputs.repo }}" /tmp/target
+
+      - name: Run benchmark
+        env:
+          BENCH_OUT: ${{ github.workspace }}/bench-results.txt
+          WITH_FN: ${{ inputs.with_fn && '1' || '0' }}
+        run: bash bench/run.sh /tmp/target
+
+      - name: Publish results to the run summary
+        if: always()
+        run: |
+          {
+            echo '```'
+            cat bench-results.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench-results.txt

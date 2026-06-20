@@ -137,6 +137,15 @@ faster, safe replacement for `cargo test` (see
 [`.github/workflows/selective-tests.yml`](.github/workflows/selective-tests.yml)).
 For PRs, use `--since origin/main`.
 
+## Benchmarks
+
+[`bench/run.sh`](bench) benchmarks oryn against any real Cargo workspace
+(defaults to cloning ripgrep): `bench/run.sh [workspace-dir]`. The
+[`benchmark`](.github/workflows/benchmark.yml) workflow runs it on demand
+(Actions → *benchmark*) with `mold`/`clang`/`llvm-tools` installed. On ripgrep
+(10 crates, 1,139 tests) the warm test loop is **~95× faster** than
+`cargo test --workspace`; see [`bench/README.md`](bench/README.md).
+
 ## Workspace
 
 | Crate | What it is |
