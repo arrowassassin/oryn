@@ -2,6 +2,7 @@
 
 mod render;
 mod runner;
+mod tui;
 
 use std::path::PathBuf;
 
@@ -80,6 +81,15 @@ enum Cmd {
         #[arg(long, default_value_t = 0.95)]
         confidence: f64,
     },
+    /// Open the terminal dashboard (selection, cache, crates, flaky stats).
+    Tui {
+        /// Compare against this git ref instead of the working tree.
+        #[arg(long)]
+        since: Option<String>,
+        /// Confidence/credible level for the flaky view.
+        #[arg(long, default_value_t = 0.95)]
+        level: f64,
+    },
     /// Enable rich per-test collection (writes a nextest JUnit profile).
     Setup,
     /// Detect proven compile-time speedups that aren't enabled here.
@@ -115,6 +125,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Tui { since, level } => tui::run(since.as_deref(), level),
         Cmd::Setup => runner::setup(),
         Cmd::Tune => runner::tune(),
         Cmd::Info => {

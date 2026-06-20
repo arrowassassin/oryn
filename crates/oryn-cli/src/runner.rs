@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
+use oryn_core::dashboard::Dashboard;
 use oryn_core::flaky::TestRuns;
 use oryn_core::graph::WorkspaceGraph;
 use oryn_core::runner::attribute_crates;
@@ -50,6 +51,15 @@ fn candidates(graph: &WorkspaceGraph, plan: &SelectionPlan, all: bool) -> Vec<St
     } else {
         plan.affected_crates.clone()
     }
+}
+
+/// Assemble a full [`Dashboard`] snapshot (used by the TUI and `--json`).
+pub fn collect_dashboard(since: Option<&str>, level: f64) -> Result<Dashboard> {
+    let (graph, _root, plan) = context(since)?;
+    let ver = rustc_version();
+    let fps = fingerprint::compute(&graph, &ver).context("fingerprinting crates")?;
+    let st = Store::load(&Store::dir_for(&graph.root)).context("loading oryn store")?;
+    Ok(Dashboard::build(&graph, &plan, &fps, &st, level))
 }
 
 /// `oryn affected`
