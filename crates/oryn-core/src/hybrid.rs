@@ -10,7 +10,7 @@
 //!   item, or if the file won't parse → **whole-crate fallback** (safe).
 
 use crate::difflines::Hunk;
-use crate::fnspans::FileImpact;
+use crate::fnselect::FileImpact;
 use crate::refgraph::{ItemKind, RefGraph};
 use std::collections::{BTreeMap, BTreeSet};
 

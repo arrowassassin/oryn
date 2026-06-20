@@ -120,7 +120,7 @@ For PRs, use `--since origin/main`.
 
 | Crate | What it is |
 |-------|------------|
-| [`oryn-core`](crates/oryn-core) | The engine. Crate selection (`graph`, `metadata`, `git`, `select`); hybrid function-level selection (`coverage`, `difflines`, `fnspans`, `fnselect`, `refgraph` static reference graph, `hybrid` dynamic+static analyzer); sound result caching (`fingerprint`, `store`, `runner`); test collection (`junit`); the statistical framework (`stats` Wilson/bootstrap, `bayes` Beta-Binomial, `flaky`, `prioritize`, `bisect`); and the render-agnostic `dashboard`. Pure, deterministic, exhaustively unit-tested. |
+| [`oryn-core`](crates/oryn-core) | The engine. Crate selection (`graph`, `metadata`, `git`, `select`); hybrid function-level selection (`coverage`, `difflines`, `fnselect`, `refgraph` static reference graph, `hybrid` dynamic+static analyzer); sound result caching (`fingerprint`, `store`, `runner`); test collection (`junit`); the statistical framework (`stats` Wilson interval, `bayes` Beta-Binomial, `flaky`, `prioritize`, `bisect`); and the render-agnostic `dashboard`. Pure, deterministic, exhaustively unit-tested. |
 | [`oryn-cli`](crates/oryn-cli) | The `oryn` binary — orchestration over cargo/nextest/git/sccache/llvm-cov, and the ratatui `tui`. |
 
 ## Soundness notes

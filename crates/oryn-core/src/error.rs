@@ -8,14 +8,6 @@ pub type Result<T> = std::result::Result<T, OrynError>;
 /// Errors produced by the engine.
 #[derive(Debug, Error)]
 pub enum OrynError {
-    /// Caller supplied an empty or otherwise unusable dataset.
-    #[error("empty input: {0}")]
-    EmptyInput(String),
-
-    /// Two datasets that must align had mismatched lengths.
-    #[error("length mismatch: {0}")]
-    LengthMismatch(String),
-
     /// A parameter was outside its valid domain.
     #[error("invalid parameter: {0}")]
     InvalidParameter(String),

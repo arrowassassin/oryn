@@ -29,7 +29,6 @@ pub mod error;
 pub mod fingerprint;
 pub mod flaky;
 pub mod fnselect;
-pub mod fnspans;
 pub mod git;
 pub mod graph;
 pub mod hybrid;

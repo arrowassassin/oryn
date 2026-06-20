@@ -6,11 +6,29 @@
 //! covered lines. Changes *outside* a function body (a `const`, `static`,
 //! `type`, `use`, item-position macro) are not captured by execution traces and
 //! can affect a test through non-execution dependencies, so any such change
-//! ([`FileImpact::Whole`](crate::fnspans::FileImpact)) conservatively reruns
-//! every test in the crate. A test with no coverage record always reruns.
+//! ([`FileImpact::Whole`]) conservatively reruns every test in the crate. A test
+//! with no coverage record always reruns.
 
-use crate::fnspans::{intersects, FileImpact};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// The impact of a file's change set: either the whole file (a change that can't
+/// be localized safely) or a precise set of impacted old lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileImpact {
+    /// Conservatively rerun every test that executed any line of this file.
+    Whole,
+    /// Rerun a test only if it executed one of these old lines.
+    Lines(BTreeSet<usize>),
+}
+
+/// Does a test that executed `covered` old lines need to rerun under `impact`?
+#[must_use]
+pub fn intersects(impact: &FileImpact, covered: &BTreeSet<usize>) -> bool {
+    match impact {
+        FileImpact::Whole => true,
+        FileImpact::Lines(lines) => lines.intersection(covered).next().is_some(),
+    }
+}
 
 /// Per-test covered lines: test id → (file → executed lines).
 pub type TestCoverage = BTreeMap<String, BTreeMap<String, BTreeSet<usize>>>;
@@ -97,6 +115,14 @@ mod tests {
         let sel = select(&impacts, &coverage, &tests);
         assert_eq!(sel.run, tests);
         assert!(sel.skip.is_empty());
+    }
+
+    #[test]
+    fn intersection_logic() {
+        let imp = FileImpact::Lines(BTreeSet::from([5, 6, 7, 8]));
+        assert!(intersects(&imp, &BTreeSet::from([6])));
+        assert!(!intersects(&imp, &BTreeSet::from([2, 3])));
+        assert!(intersects(&FileImpact::Whole, &BTreeSet::new()));
     }
 
     #[test]
