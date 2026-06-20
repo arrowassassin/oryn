@@ -4,7 +4,7 @@ members = ["crates/oryn-core", "crates/oryn"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT"
 repository = "https://github.com/arrowassassin/oryn"
 homepage = "https://github.com/arrowassassin/oryn"
@@ -24,7 +24,7 @@ unsafe_code = "forbid"
 all = "warn"
 
 [workspace.dependencies]
-oryn-core = { path = "crates/oryn-core", version = "0.1.0" }
+oryn-core = { path = "crates/oryn-core", version = "0.1.1" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 thiserror = "2.0"

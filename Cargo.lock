@@ -902,7 +902,7 @@ dependencies = [
 
 [[package]]
 name = "oryn"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "oryn-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "proc-macro2",

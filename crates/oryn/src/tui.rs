@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table, Tabs},
+    widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table, TableState, Tabs},
     Frame,
 };
 use std::time::Duration;
@@ -27,6 +27,9 @@ pub struct App {
     row: usize,
     status: String,
     quit: bool,
+    /// Set when the user presses `t`; the run loop leaves the TUI, runs
+    /// `oryn test`, then re-enters and refreshes.
+    run_requested: bool,
 }
 
 impl App {
@@ -41,6 +44,7 @@ impl App {
             row: 0,
             status: "ready".into(),
             quit: false,
+            run_requested: false,
         }
     }
 
@@ -84,6 +88,7 @@ impl App {
                 }
             }
             KeyCode::Char('r') => self.refresh(),
+            KeyCode::Char('t') => self.run_requested = true,
             KeyCode::Char(c @ '1'..='5') => {
                 self.tab = (c as usize) - ('1' as usize);
                 self.row = 0;
@@ -127,9 +132,37 @@ pub fn run(since: Option<&str>, level: f64) -> Result<()> {
             Ok(false) => {}
             Err(e) => break Err(e.into()),
         }
+        if app.run_requested {
+            app.run_requested = false;
+            // Leave the alternate screen, run `oryn test` with the terminal
+            // handed back to it, then re-enter and refresh the dashboard.
+            ratatui::restore();
+            run_tests_interactive(app.since.as_deref());
+            term = ratatui::init();
+            app.refresh();
+        }
     };
     ratatui::restore();
     result
+}
+
+/// Run `oryn test` for the current selection as a child process with the real
+/// terminal, then wait for a keypress before returning to the dashboard. Runs
+/// the binary itself so the child owns its own exit code (it never kills the TUI).
+fn run_tests_interactive(since: Option<&str>) {
+    use std::io::Write;
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("oryn"));
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("test");
+    if let Some(s) = since {
+        cmd.args(["--since", s]);
+    }
+    println!("\n── oryn test ──\n");
+    let _ = cmd.status();
+    print!("\n[tests finished — press Enter to return to the dashboard] ");
+    let _ = std::io::stdout().flush();
+    let mut buf = String::new();
+    let _ = std::io::stdin().read_line(&mut buf);
 }
 
 /// Render one full frame (separated for `TestBackend` unit tests).
@@ -175,7 +208,9 @@ pub fn ui(f: &mut Frame, app: &App) {
         Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
         Span::raw(" move  "),
         Span::styled("r", Style::default().fg(Color::Cyan)),
-        Span::raw(format!(" refresh   [{}]", app.status)),
+        Span::raw(" refresh  "),
+        Span::styled("t", Style::default().fg(Color::Cyan)),
+        Span::raw(format!(" run tests   [{}]", app.status)),
     ]);
     f.render_widget(Paragraph::new(footer), chunks[2]);
 }
@@ -274,24 +309,18 @@ fn selection(f: &mut Frame, area: Rect, app: &App) {
         .dash
         .crates
         .iter()
-        .enumerate()
-        .map(|(i, c)| {
+        .map(|c| {
             let green = if c.cached_green {
                 Cell::from("green ✓").style(Style::default().fg(Color::Green))
             } else {
                 Cell::from("—").style(Style::default().fg(Color::DarkGray))
             };
-            let r = Row::new(vec![
+            Row::new(vec![
                 Cell::from(c.name.clone()),
                 status_cell(c.status),
                 green,
                 Cell::from(c.short_fp.clone()),
-            ]);
-            if i == app.row {
-                r.style(Style::default().bg(Color::Rgb(40, 40, 60)))
-            } else {
-                r
-            }
+            ])
         })
         .collect();
     let table = Table::new(
@@ -307,8 +336,15 @@ fn selection(f: &mut Frame, area: Rect, app: &App) {
         Row::new(vec!["crate", "status", "cache", "fingerprint"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
+    .row_highlight_style(Style::default().bg(Color::Rgb(40, 40, 60)))
     .block(block("Selection — what your change affects"));
-    f.render_widget(table, area);
+    f.render_stateful_widget(table, area, &mut selected_state(app.row));
+}
+
+/// A fresh `TableState` selecting `row`; ratatui scrolls the viewport so the
+/// selected row stays visible (the fix for workspaces taller than the screen).
+fn selected_state(row: usize) -> TableState {
+    TableState::default().with_selected(Some(row))
 }
 
 fn crates(f: &mut Frame, area: Rect, app: &App) {
@@ -316,20 +352,14 @@ fn crates(f: &mut Frame, area: Rect, app: &App) {
         .dash
         .crates
         .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let r = Row::new(vec![
+        .map(|c| {
+            Row::new(vec![
                 Cell::from(c.name.clone()),
                 Cell::from(c.short_fp.clone()),
                 Cell::from(if c.cached_green { "green" } else { "stale" }),
                 Cell::from(c.tests.to_string()),
                 Cell::from(format!("{} ms", c.total_ms)),
-            ]);
-            if i == app.row {
-                r.style(Style::default().bg(Color::Rgb(40, 40, 60)))
-            } else {
-                r
-            }
+            ])
         })
         .collect();
     let table = Table::new(
@@ -346,8 +376,9 @@ fn crates(f: &mut Frame, area: Rect, app: &App) {
         Row::new(vec!["crate", "fingerprint", "cache", "tests", "time"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
+    .row_highlight_style(Style::default().bg(Color::Rgb(40, 40, 60)))
     .block(block("Crates"));
-    f.render_widget(table, area);
+    f.render_stateful_widget(table, area, &mut selected_state(app.row));
 }
 
 /// A 10-cell unicode bar for a 0..1 value.
@@ -389,13 +420,12 @@ fn flaky(f: &mut Frame, area: Rect, app: &App) {
 
     let rows: Vec<Row> = interesting
         .iter()
-        .enumerate()
-        .map(|(i, t)| {
+        .map(|t| {
             let (tag, color) = match t.verdict {
                 FlakyVerdict::Flaky => ("FLAKY", Color::Magenta),
                 _ => ("FAIL", Color::Red),
             };
-            let cells = vec![
+            Row::new(vec![
                 Cell::from(tag).style(Style::default().fg(color)),
                 Cell::from(t.id.clone()),
                 Cell::from(format!("{:>5.1}%", t.flake_rate * 100.0)),
@@ -411,13 +441,7 @@ fn flaky(f: &mut Frame, area: Rect, app: &App) {
                         .map(|n| n.to_string())
                         .unwrap_or_else(|| "—".into()),
                 ),
-            ];
-            let r = Row::new(cells);
-            if i == app.row {
-                r.style(Style::default().bg(Color::Rgb(40, 40, 60)))
-            } else {
-                r
-            }
+            ])
         })
         .collect();
 
@@ -439,10 +463,11 @@ fn flaky(f: &mut Frame, area: Rect, app: &App) {
         ])
         .style(Style::default().add_modifier(Modifier::BOLD)),
     )
+    .row_highlight_style(Style::default().bg(Color::Rgb(40, 40, 60)))
     .block(block(
         "Flaky tests — frequentist (Wilson) + Bayesian intervals, rerun budget",
     ));
-    f.render_widget(table, area);
+    f.render_stateful_widget(table, area, &mut selected_state(app.row));
 }
 
 fn help(f: &mut Frame, area: Rect) {
@@ -455,6 +480,7 @@ fn help(f: &mut Frame, area: Rect) {
         Line::from("  1–5 / ←/→ / Tab    switch tabs"),
         Line::from("  ↑/↓ (or j/k)       move selection"),
         Line::from("  r                  refresh (recompute selection, fingerprints, stats)"),
+        Line::from("  t                  run `oryn test` for the selection, then return"),
         Line::from("  q / Esc            quit"),
         Line::from(""),
         Line::from(Span::styled("  Tabs", Style::default().fg(Color::Cyan))),
@@ -563,5 +589,46 @@ mod tests {
         assert_eq!(app.row, 1);
         app.on_key(KeyCode::Down); // wraps (2 crates)
         assert_eq!(app.row, 0);
+    }
+
+    #[test]
+    fn t_requests_a_test_run() {
+        let mut app = App::new(sample(), None, 0.95);
+        assert!(!app.run_requested);
+        app.on_key(KeyCode::Char('t'));
+        assert!(app.run_requested);
+    }
+
+    #[test]
+    fn selection_scrolls_to_keep_far_row_visible() {
+        // 60 crates, 30-row terminal: selecting row 55 must still render it.
+        let mut dash = sample();
+        dash.crates = (0..60)
+            .map(|i| CrateView {
+                name: format!("crate{i:02}"),
+                short_fp: "fp".into(),
+                cached_green: false,
+                status: CrateStatus::Affected,
+                tests: 0,
+                total_ms: 0,
+            })
+            .collect();
+        let mut app = App::new(dash, None, 0.95);
+        app.tab = 1;
+        app.row = 55;
+        let backend = TestBackend::new(120, 30);
+        let mut term = Terminal::new(backend).unwrap();
+        term.draw(|f| ui(f, &app)).unwrap();
+        let s: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(
+            s.contains("crate55"),
+            "viewport did not scroll to the selection"
+        );
     }
 }

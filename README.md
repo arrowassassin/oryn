@@ -54,7 +54,8 @@ then skip), while `cargo test` re-runs everything. Reproduce with [`bench/run.sh
 - **Build doctor.** `oryn tune --apply` writes only sound, stable config
   (`debug = "line-tables-only"`, `split-debuginfo`, the right linker for your
   target) and wraps `sccache` rather than reinventing a compile cache.
-- **Terminal UI.** `oryn tui` — selection, cache state, crates, and flaky stats.
+- **Terminal UI.** `oryn tui` — selection, cache state, crates, and flaky stats;
+  press `t` to run the current selection without leaving the dashboard.
 
 ## Commands
 
