@@ -18,6 +18,10 @@ It builds `target/release/oryn` if needed, refuses a dirty target tree, and only
 edits-then-reverts tracked files. Results are also written to `$BENCH_OUT`
 (a temp file by default).
 
+Tuning knobs (env): `RUNS` (cheap oryn-side measurements, default 5) and
+`BASELINE_RUNS` (the expensive `cargo test --workspace` baseline, default 2 —
+keep it low on heavy suites like tokio, where each run re-runs the whole suite).
+
 ## What it measures
 
 | Section | What |
