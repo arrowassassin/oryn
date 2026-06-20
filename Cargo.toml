@@ -1,15 +1,34 @@
 [workspace]
-resolver = "3"
-members = ["crates/oryn-core", "crates/oryn-app"]
+resolver = "2"
+members = ["crates/oryn-core", "crates/oryn-cli"]
 
 [workspace.package]
-edition = "2024"
+edition = "2021"
 version = "0.1.0"
 license = "MIT"
 repository = "https://github.com/arrowassassin/oryn"
+rust-version = "1.96"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+[workspace.dependencies]
+oryn-core = { path = "crates/oryn-core" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0"
+anyhow = "1.0"
+blake3 = "1.5"
+quick-xml = "0.36"
+syn = { version = "2", features = ["full", "parsing"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+clap = { version = "4.5", features = ["derive"] }
+ratatui = "0.30"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,509 @@
+//! Subprocess orchestration for the `oryn` subcommands.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use anyhow::{Context, Result};
+use oryn_core::dashboard::Dashboard;
+use oryn_core::flaky::TestRuns;
+use oryn_core::graph::WorkspaceGraph;
+use oryn_core::runner::attribute_crates;
+use oryn_core::select::SelectionPlan;
+use oryn_core::store::{self, Store};
+use oryn_core::{fingerprint, flaky, git, junit, metadata, select};
+
+use crate::render;
+
+/// Does `bin args…` run successfully?
+#[must_use]
+pub fn has(bin: &str, args: &[&str]) -> bool {
+    Command::new(bin)
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn rustc_version() -> String {
+    Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_else(|| "rustc-unknown".to_string())
+}
+
+/// Load the workspace graph, repo root, and a selection plan for `since`.
+fn context(since: Option<&str>) -> Result<(WorkspaceGraph, PathBuf, SelectionPlan)> {
+    let cwd = std::env::current_dir()?;
+    let graph = metadata::load(&cwd).context("loading cargo metadata")?;
+    let root = git::repo_root(&cwd).context("finding git repo root")?;
+    let changed = git::changed_files(&root, since).context("listing changed files")?;
+    let plan = select::plan(&graph, &root, &changed);
+    Ok((graph, root, plan))
+}
+
+/// The crates we should consider testing/building.
+fn candidates(graph: &WorkspaceGraph, plan: &SelectionPlan, all: bool) -> Vec<String> {
+    if all {
+        graph.names(&graph.all_indices())
+    } else {
+        plan.affected_crates.clone()
+    }
+}
+
+/// Assemble a full [`Dashboard`] snapshot (used by the TUI and `--json`).
+pub fn collect_dashboard(since: Option<&str>, level: f64) -> Result<Dashboard> {
+    let (graph, _root, plan) = context(since)?;
+    let ver = rustc_version();
+    let fps = fingerprint::compute(&graph, &ver).context("fingerprinting crates")?;
+    let st = Store::load(&Store::dir_for(&graph.root)).context("loading oryn store")?;
+    Ok(Dashboard::build(&graph, &plan, &fps, &st, level))
+}
+
+/// `oryn affected`
+pub fn affected(since: Option<&str>, json: bool) -> Result<()> {
+    let (_g, _r, plan) = context(since)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+    } else {
+        render::plan(&plan);
+    }
+    Ok(())
+}
+
+/// Apply sccache as the compile cache to a cargo invocation, if requested and
+/// available. A missing-but-requested cache is a warning, not an error.
+fn apply_cache(cmd: &mut Command, requested: bool) {
+    if !requested {
+        return;
+    }
+    if has("sccache", &["--version"]) {
+        cmd.env("RUSTC_WRAPPER", "sccache");
+        // Make artifacts path-independent so the cache is portable & reproducible.
+        cmd.env("CARGO_INCREMENTAL", "0");
+        eprintln!("oryn: compile cache ON (RUSTC_WRAPPER=sccache)");
+    } else {
+        eprintln!(
+            "oryn: --cache requested but sccache not found; run `oryn tune` for install steps"
+        );
+    }
+}
+
+/// `oryn test`
+pub fn test(
+    since: Option<&str>,
+    all: bool,
+    no_cache: bool,
+    cache: bool,
+    extra: &[String],
+) -> Result<()> {
+    let (graph, _root, plan) = context(since)?;
+    let cands = candidates(&graph, &plan, all);
+    if cands.is_empty() {
+        println!("oryn: {} — nothing to test ✓", plan.reason);
+        return Ok(());
+    }
+
+    let ver = rustc_version();
+    let fps = fingerprint::compute(&graph, &ver).context("fingerprinting crates")?;
+    let store_dir = Store::dir_for(&graph.root);
+    let mut st = Store::load(&store_dir).context("loading oryn store")?;
+
+    let to_run: Vec<String> = cands
+        .iter()
+        .filter(|c| no_cache || !is_green(&st, c, &fps))
+        .cloned()
+        .collect();
+    let cached = cands.len() - to_run.len();
+
+    if to_run.is_empty() {
+        println!(
+            "oryn: all {} affected crate(s) are cached green — nothing to run ✓",
+            cached
+        );
+        return Ok(());
+    }
+    eprintln!(
+        "oryn: {} affected, {} cached green, running {} ▶ {}",
+        cands.len(),
+        cached,
+        to_run.len(),
+        to_run.join(", ")
+    );
+
+    let now = store::now_unix();
+    let use_nextest = has("cargo", &["nextest", "--version"]) && nextest_profile(&graph.root);
+
+    let status = if use_nextest {
+        run_tests_nextest(&graph, &to_run, &fps, &mut st, now, cache, extra)?
+    } else {
+        run_tests_cargo(&to_run, &fps, &mut st, now, cache, extra)?
+    };
+
+    st.save(&store_dir).context("saving oryn store")?;
+
+    match status {
+        0 => println!(
+            "oryn: {} crate(s) green ✓ ({} skipped via cache)",
+            to_run.len(),
+            cached
+        ),
+        code => {
+            println!("oryn: tests failed (exit {code})");
+            std::process::exit(code);
+        }
+    }
+    Ok(())
+}
+
+fn is_green(
+    st: &Store,
+    crate_name: &str,
+    fps: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    fps.get(crate_name)
+        .is_some_and(|fp| st.is_green(crate_name, fp))
+}
+
+/// Apply an *observed* outcome to a crate's green cache. `None` means the crate
+/// produced no test outcomes this run — we leave its cache state untouched
+/// (absence of failure is not proof of passing).
+fn record_green(
+    st: &mut Store,
+    crate_name: &str,
+    fps: &std::collections::BTreeMap<String, String>,
+    now: u64,
+    passed: Option<bool>,
+) {
+    match (passed, fps.get(crate_name)) {
+        (Some(true), Some(fp)) => st.record_green(crate_name, fp, now),
+        (Some(false), _) => st.clear_green(crate_name),
+        // None (unobserved) or missing fingerprint → don't assert green.
+        _ => {}
+    }
+}
+
+/// Does `extra` contain a libtest filter that makes the run non-exhaustive
+/// (a positional name filter, `--skip`, `--exact`, `--ignored`, `--include-ignored`)?
+/// If so, a "pass" doesn't prove the whole crate is green.
+fn extra_filters_tests(extra: &[String]) -> bool {
+    extra.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--skip" | "--exact" | "--ignored" | "--include-ignored"
+        ) || (!a.starts_with('-') && !a.is_empty())
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_tests_nextest(
+    graph: &WorkspaceGraph,
+    to_run: &[String],
+    fps: &std::collections::BTreeMap<String, String>,
+    st: &mut Store,
+    now: u64,
+    cache: bool,
+    extra: &[String],
+) -> Result<i32> {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["nextest", "run", "--profile", "oryn"]);
+    for c in to_run {
+        cmd.args(["-p", c]);
+    }
+    cmd.args(extra);
+    apply_cache(&mut cmd, cache);
+    let status = cmd.status().context("running cargo nextest")?;
+
+    let junit = graph.root.join("target/nextest/oryn/junit.xml");
+    if let Ok(bytes) = std::fs::read(&junit) {
+        let outcomes = junit::parse(&bytes)?;
+        for o in &outcomes {
+            st.observe_test(&o.id, o.passed, now, o.duration_ms);
+        }
+        for (c, passed) in attribute_crates(&outcomes, to_run) {
+            record_green(st, &c, fps, now, passed);
+        }
+    } else {
+        // No JUnit (profile not writing?) — fall back to aggregate status, but
+        // only credit green when the run was exhaustive (no test filters).
+        let observed = (!extra_filters_tests(extra)).then_some(status.success());
+        for c in to_run {
+            record_green(st, c, fps, now, observed);
+        }
+    }
+    Ok(status.code().unwrap_or(1))
+}
+
+fn run_tests_cargo(
+    to_run: &[String],
+    fps: &std::collections::BTreeMap<String, String>,
+    st: &mut Store,
+    now: u64,
+    cache: bool,
+    extra: &[String],
+) -> Result<i32> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("test");
+    for c in to_run {
+        cmd.args(["-p", c]);
+    }
+    // Route passthrough args to libtest (after `--`) so `oryn test -- --nocapture`
+    // works instead of being rejected by cargo.
+    if !extra.is_empty() {
+        cmd.arg("--");
+        cmd.args(extra);
+    }
+    apply_cache(&mut cmd, cache);
+    let status = cmd.status().context("running cargo test")?;
+    // Aggregate result: we can't attribute per crate, and a filtered run
+    // (`-- --skip foo`) isn't exhaustive — only credit green for an
+    // unfiltered, fully-passing run; otherwise leave/clear cache conservatively.
+    let observed = if extra_filters_tests(extra) {
+        if status.success() {
+            None // passed, but not exhaustive → don't assert green
+        } else {
+            Some(false) // a failure is always real
+        }
+    } else {
+        Some(status.success())
+    };
+    for c in to_run {
+        record_green(st, c, fps, now, observed);
+    }
+    Ok(status.code().unwrap_or(1))
+}
+
+/// `oryn build`
+pub fn build(
+    since: Option<&str>,
+    all: bool,
+    tests: bool,
+    cache: bool,
+    extra: &[String],
+) -> Result<()> {
+    let (graph, _root, plan) = context(since)?;
+    let cands = candidates(&graph, &plan, all);
+    if cands.is_empty() {
+        println!("oryn: {} — nothing to build ✓", plan.reason);
+        return Ok(());
+    }
+    eprintln!(
+        "oryn: {} {} affected crate(s) ▶ {}",
+        if tests {
+            "compiling test binaries for"
+        } else {
+            "building"
+        },
+        cands.len(),
+        cands.join(", ")
+    );
+    let mut cmd = Command::new("cargo");
+    // `--tests` front-loads the exact artifacts `oryn test` consumes (test
+    // targets differ from lib/bin: cfg(test), dev-deps), so `oryn build --tests`
+    // then `oryn test` compiles once, not twice.
+    if tests {
+        cmd.args(["test", "--no-run"]);
+    } else {
+        cmd.arg("build");
+    }
+    for c in &cands {
+        cmd.args(["-p", c]);
+    }
+    cmd.args(extra);
+    apply_cache(&mut cmd, cache);
+    let status = cmd.status().context("running cargo build")?;
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// `oryn cache` — show sccache statistics, the correct shared compile cache.
+pub fn cache_stats() -> Result<()> {
+    if !has("sccache", &["--version"]) {
+        println!("sccache not found. It is the correct, battle-tested shared compile cache.");
+        println!("Install:  cargo install sccache");
+        println!("Use:      oryn build --cache   (or set RUSTC_WRAPPER=sccache)");
+        return Ok(());
+    }
+    let status = Command::new("sccache")
+        .arg("--show-stats")
+        .status()
+        .context("running sccache --show-stats")?;
+    std::process::exit(status.code().unwrap_or(0));
+}
+
+/// `oryn flaky`
+pub fn flaky(input: Option<&Path>, level: f64, json: bool) -> Result<()> {
+    let runs: Vec<TestRuns> = match input {
+        Some(path) => read_runs(path)?,
+        None => {
+            let cwd = std::env::current_dir()?;
+            let graph = metadata::load(&cwd)?;
+            let st = Store::load(&Store::dir_for(&graph.root))?;
+            st.tests
+                .iter()
+                .map(|(id, r)| TestRuns::new(id.clone(), r.passes, r.fails))
+                .collect()
+        }
+    };
+    if runs.is_empty() {
+        println!(
+            "No test history yet. Run `oryn setup` then `oryn test` to collect per-test data."
+        );
+        return Ok(());
+    }
+    let report = flaky::analyze(&runs, level);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        render::flaky(&report);
+    }
+    Ok(())
+}
+
+fn read_runs(path: &Path) -> Result<Vec<TestRuns>> {
+    let raw =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    if raw.trim_start().starts_with('[') {
+        Ok(serde_json::from_str(&raw)?)
+    } else {
+        let mut out = Vec::new();
+        for (n, line) in raw.lines().enumerate() {
+            let line = line.trim();
+            if !line.is_empty() {
+                out.push(
+                    serde_json::from_str(line)
+                        .with_context(|| format!("{}:{}: invalid JSON", path.display(), n + 1))?,
+                );
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn nextest_profile(root: &Path) -> bool {
+    std::fs::read_to_string(root.join(".config/nextest.toml"))
+        .map(|s| s.contains("profile.oryn"))
+        .unwrap_or(false)
+}
+
+/// `oryn setup`
+pub fn setup() -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let root = git::repo_root(&cwd).unwrap_or(cwd);
+    let path = root.join(".config/nextest.toml");
+    const SNIPPET: &str = "\n[profile.oryn]\n# Written by `oryn setup` — enables per-test result collection.\n[profile.oryn.junit]\npath = \"junit.xml\"\n";
+    if path.exists() {
+        let existing = std::fs::read_to_string(&path)?;
+        if existing.contains("profile.oryn") {
+            println!(
+                "✓ nextest 'oryn' profile already present in {}",
+                path.display()
+            );
+        } else {
+            std::fs::write(&path, format!("{existing}{SNIPPET}"))?;
+            println!("✓ added 'oryn' profile to {}", path.display());
+        }
+    } else {
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(&path, SNIPPET.trim_start())?;
+        println!("✓ created {} with the 'oryn' profile", path.display());
+    }
+    println!("Now `oryn test` will collect per-test history (needs cargo-nextest installed).");
+    Ok(())
+}
+
+/// Host triple and rustc semver from `rustc -vV`.
+fn rustc_host_and_version() -> (String, oryn_core::tune::Semver) {
+    let vv = rustc_version();
+    let host = vv
+        .lines()
+        .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
+        .unwrap_or_default();
+    let ver = oryn_core::tune::parse_rustc_semver(&vv).unwrap_or((0, 0, 0));
+    (host, ver)
+}
+
+/// `oryn tune [--apply]`
+pub fn tune(apply: bool) -> Result<()> {
+    use oryn_core::tune;
+    let (host, ver) = rustc_host_and_version();
+    let mold = has("mold", &["--version"]);
+    let clang = has("clang", &["--version"]);
+    let os = std::env::consts::OS;
+
+    println!("Compile-time tuning (sound, stable wins):\n");
+
+    println!("Linker:");
+    if tune::rust_lld_is_default(&host, ver) {
+        println!("  ✓ rust-lld is already the default linker on {host} (Rust ≥ 1.90) — fast path.");
+        if mold {
+            println!("  • mold is installed — an optional extra edge for link-heavy builds.");
+        }
+    } else if os == "linux" {
+        if mold && clang {
+            println!("  • mold + clang found — recommended (large link-time win on Linux).");
+        } else {
+            println!("  • rust-lld is NOT the default for {host}. Install `mold` (+clang) for fast links.");
+        }
+    } else if os == "macos" {
+        println!(
+            "  • macOS: the default `ld-prime` (Xcode 15+) is already the fast path — no change."
+        );
+    }
+
+    println!("\nDev build speed (sound — no runtime/behaviour change):");
+    println!("  • debug = \"line-tables-only\"  → keeps backtraces, ~20–40% faster dev builds.");
+    if os == "linux" || os == "macos" {
+        println!("  • split-debuginfo = \"unpacked\"  → less link-time copying.");
+    }
+    println!(
+        "  NOTE: `opt-level=3` for deps and `codegen-units=1`/LTO are RUNTIME wins that *increase*"
+    );
+    println!("        build time — not recommended if your goal is faster compiles.");
+
+    if let Some(advice) = workspace_hack_advice()? {
+        println!("\nWorkspace:");
+        println!("  • {advice}");
+    }
+
+    println!("\nCaching:");
+    if has("sccache", &["--version"]) {
+        println!("  ✓ sccache found — `oryn build --cache` / set RUSTC_WRAPPER=sccache (warm-cache/CI win).");
+    } else {
+        println!("  • `cargo install sccache` for a sound cross-run compile cache (best in CI; cold builds are slower).");
+    }
+
+    println!("\nDo less work:");
+    println!("  • `oryn build`/`oryn test` build & test only the crates your change affects.");
+    println!("  • `oryn build --tests` precompiles test binaries so `oryn test` is run-only.");
+
+    let cfg = tune::cargo_config(&host, os, ver, mold, clang);
+    if apply {
+        let cwd = std::env::current_dir()?;
+        let root = git::repo_root(&cwd).unwrap_or(cwd);
+        let path = root.join(".cargo/config.toml");
+        if path.exists() {
+            println!(
+                "\n`{}` already exists — not overwriting. Add these settings manually:\n\n{}",
+                path.display(),
+                cfg
+            );
+        } else {
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::write(&path, &cfg)?;
+            println!("\n✓ wrote sound defaults to {}", path.display());
+        }
+    } else {
+        println!("\nRun `oryn tune --apply` to write these to .cargo/config.toml:\n\n{cfg}");
+    }
+    Ok(())
+}
+
+/// Workspace-hack recommendation from the current workspace's members.
+fn workspace_hack_advice() -> Result<Option<String>> {
+    let cwd = std::env::current_dir()?;
+    let graph = metadata::load(&cwd)?;
+    let names = graph.names(&graph.all_indices());
+    Ok(oryn_core::tune::hakari_advice(&names))
+}

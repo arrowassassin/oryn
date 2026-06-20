@@ -1,0 +1,29 @@
+name: Selective tests (oryn dogfood)
+
+# Demonstrates Oryn driving its own CI: on a PR, build the tool, then run tests
+# for only the crates the PR actually affects. Falls back safely to the whole
+# workspace when a workspace-level file changes.
+
+on:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  selective:
+    name: oryn test --since base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so `--since` can diff against the base
+      - name: Install Rust 1.96
+        uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Build oryn
+        run: cargo build --release -p oryn-cli
+      - name: Show what this PR affects
+        run: ./target/release/oryn affected --since "origin/${{ github.base_ref }}"
+      - name: Run only the affected crates' tests
+        run: ./target/release/oryn test --since "origin/${{ github.base_ref }}"
