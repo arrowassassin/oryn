@@ -40,6 +40,7 @@ pub mod runner;
 pub mod select;
 pub mod stats;
 pub mod store;
+pub mod tune;
 
 pub use error::{OrynError, Result};
 

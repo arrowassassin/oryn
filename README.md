@@ -63,10 +63,22 @@ Speed and correctness pull against each other, so each lever is deliberate:
    drive **sccache** (the correct, battle-tested shared cache) — Oryn does not
    ship a homegrown one. `oryn cache` shows hit/miss stats.
 
-4. **Auto-apply the proven fast path.** `oryn tune` detects and configures the
-   wins most devs never enable: fast linker (note: `rust-lld` is already default
-   on x86_64-linux since Rust 1.90), sccache, dependency optimization,
-   `split-debuginfo`.
+4. **Auto-apply the proven fast path.** `oryn tune` is the *workspace-aware build
+   doctor*: it detects your toolchain and writes only **sound, stable** config
+   (`oryn tune --apply` → `.cargo/config.toml`, never clobbering an existing one):
+   - `debug = "line-tables-only"` — keeps backtraces, ~20–40% faster dev builds.
+   - `split-debuginfo = "unpacked"` on Linux/macOS — less link-time copying.
+   - the right **linker**: it knows `rust-lld` is the default *only* on
+     `x86_64-unknown-linux-gnu` since Rust 1.90, and recommends `mold` only where
+     it helps and is installed.
+   - flags the common **anti-advice** (`opt-level=3` for deps, `codegen-units=1`,
+     LTO are *runtime* wins that make builds **slower**) and recommends
+     `cargo-hakari` for large workspaces.
+
+   `oryn build --tests` precompiles the test binaries so a later `oryn test` is
+   run-only. (Oryn deliberately does **not** touch the compiler itself: every
+   rustc-internal speedup today — parallel front-end, Cranelift — is nightly or
+   preview, which would break the "stable + sound" promise.)
 
 ## Trust the results — real statistics
 
@@ -103,12 +115,12 @@ Navigate with `1–5`/arrows/`jk`, `r` to refresh, `q` to quit.
 oryn affected [--since <ref>]                 # what a change affects (safe selection)
 oryn test     [--since <ref>] [--all] [--no-cache] [--cache] [--fn]   # run only affected, skip cached-green
 oryn cover    [--since <ref>]                 # record per-test coverage for function-level selection
-oryn build    [--since <ref>] [--all] [--cache]                # build only affected crates
+oryn build    [--since <ref>] [--all] [--tests] [--cache]      # build only affected crates (--tests = precompile test bins)
 oryn tui      [--since <ref>]                 # terminal dashboard
 oryn flaky    [--input runs.jsonl] [--json]   # Wilson + Bayes + rerun budget
 oryn budget   --fail-rate 0.01 --confidence 0.95     # -> "run each test 299 times"
 oryn setup                                    # enable per-test history (nextest JUnit)
-oryn tune                                     # detect & configure compile-time speedups
+oryn tune     [--apply]                       # detect sound compile speedups (--apply writes .cargo/config.toml)
 oryn cache                                    # sccache hit/miss stats
 oryn info                                     # versions + detected tooling
 ```
@@ -136,9 +148,25 @@ For PRs, use `--since origin/main`.
 
 ## Roadmap
 
+- **Compile-bottleneck diagnosis.** Parse `cargo build --timings` (HTML today,
+  JSON once stable) and `cargo-bloat --message-format json` to name the
+  critical-path crate, idle-core intervals, and the heaviest proc-macro /
+  `build.rs` units — the "your bottleneck is crate X" report no stable tool yet
+  ships. (`cargo-bloat`'s JSON is the most robust stable parse target; full
+  timings JSON and `-Zself-profile` are nightly-only.)
+- **Workspace-hack auto-check** beyond the current heuristic: use feature-set
+  resolution (guppy-style) to *prove* a dependency is built ≥2 ways before
+  recommending `cargo-hakari` (measured ~1.7× on large workspaces).
 - **Content-addressed build cache** with early-cutoff + hermeticity checks, as an
   alternative to sccache — only if it can be made provably sound.
 - **Merge-queue batching** built on the `bisect` primitive.
+
+> On compile speed: Oryn stays a *stable, sound orchestrator*, not a compiler.
+> The rustc-internal levers (parallel front-end `-Z threads` ~20–30%, Cranelift
+> dev backend ~5% total, next-gen trait solver) are all nightly/preview, so Oryn
+> only **detects and recommends** them — its own wins come from doing less work
+> (selection + sound caching), the right linker, and trimmed debuginfo, all on
+> stable.
 
 > On function-level selection: rather than a nightly MIR rustc driver (the
 > RustyRTS approach, version-locked and fragile), Oryn implements a **hybrid**

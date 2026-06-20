@@ -115,7 +115,12 @@ enum Cmd {
     /// Enable rich per-test collection (writes a nextest JUnit profile).
     Setup,
     /// Detect proven compile-time speedups that aren't enabled here.
-    Tune,
+    Tune {
+        /// Write the recommended sound config to `.cargo/config.toml` (only if
+        /// none exists — never clobbers an existing file).
+        #[arg(long)]
+        apply: bool,
+    },
     /// Show the sccache compile-cache statistics (hits/misses).
     Cache,
     /// Show version and detected tooling.
@@ -177,7 +182,7 @@ fn main() -> Result<()> {
         }
         Cmd::Tui { since, level } => tui::run(since.as_deref(), level),
         Cmd::Setup => runner::setup(),
-        Cmd::Tune => runner::tune(),
+        Cmd::Tune { apply } => runner::tune(apply),
         Cmd::Cache => runner::cache_stats(),
         Cmd::Info => {
             println!("oryn      {}", oryn_core::VERSION);

@@ -413,42 +413,97 @@ pub fn setup() -> Result<()> {
     Ok(())
 }
 
-/// `oryn tune`
-pub fn tune() -> Result<()> {
-    println!("Compile-time tuning (proven, low-risk wins):\n");
+/// Host triple and rustc semver from `rustc -vV`.
+fn rustc_host_and_version() -> (String, oryn_core::tune::Semver) {
+    let vv = rustc_version();
+    let host = vv
+        .lines()
+        .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
+        .unwrap_or_default();
+    let ver = oryn_core::tune::parse_rustc_semver(&vv).unwrap_or((0, 0, 0));
+    (host, ver)
+}
+
+/// `oryn tune [--apply]`
+pub fn tune(apply: bool) -> Result<()> {
+    use oryn_core::tune;
+    let (host, ver) = rustc_host_and_version();
+    let mold = has("mold", &["--version"]);
+    let clang = has("clang", &["--version"]);
+    let os = std::env::consts::OS;
+
+    println!("Compile-time tuning (sound, stable wins):\n");
 
     println!("Linker:");
-    if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
-        println!("  • rust-lld is the DEFAULT linker here since Rust 1.90 — already fast.");
-        if has("mold", &["--version"]) {
-            println!("  ✓ mold found — for an extra edge, .cargo/config.toml:");
-            println!("      [target.x86_64-unknown-linux-gnu]");
-            println!("      linker = \"clang\"");
-            println!("      rustflags = [\"-C\", \"link-arg=-fuse-ld=mold\"]");
-        } else {
-            println!("  • optional: install `mold` for the fastest large-link times.");
+    if tune::rust_lld_is_default(&host, ver) {
+        println!("  ✓ rust-lld is already the default linker on {host} (Rust ≥ 1.90) — fast path.");
+        if mold {
+            println!("  • mold is installed — an optional extra edge for link-heavy builds.");
         }
-    } else if cfg!(target_os = "macos") {
+    } else if os == "linux" {
+        if mold && clang {
+            println!("  • mold + clang found — recommended (large link-time win on Linux).");
+        } else {
+            println!("  • rust-lld is NOT the default for {host}. Install `mold` (+clang) for fast links.");
+        }
+    } else if os == "macos" {
         println!(
             "  • macOS: the default `ld-prime` (Xcode 15+) is already the fast path — no change."
         );
     }
 
-    println!("\nCaching:");
-    if has("sccache", &["--version"]) {
-        println!("  ✓ sccache found — in CI set RUSTC_WRAPPER=sccache to cache crate builds across runs.");
-    } else {
-        println!("  • `cargo install sccache`, then RUSTC_WRAPPER=sccache — the correct shared compile cache.");
+    println!("\nDev build speed (sound — no runtime/behaviour change):");
+    println!("  • debug = \"line-tables-only\"  → keeps backtraces, ~20–40% faster dev builds.");
+    if os == "linux" || os == "macos" {
+        println!("  • split-debuginfo = \"unpacked\"  → less link-time copying.");
+    }
+    println!(
+        "  NOTE: `opt-level=3` for deps and `codegen-units=1`/LTO are RUNTIME wins that *increase*"
+    );
+    println!("        build time — not recommended if your goal is faster compiles.");
+
+    if let Some(advice) = workspace_hack_advice()? {
+        println!("\nWorkspace:");
+        println!("  • {advice}");
     }
 
-    println!("\nDev profile (Cargo.toml) — optimize deps once, keep your crates fast to build:");
-    println!("  [profile.dev.package.\"*\"]");
-    println!("  opt-level = 3");
-    println!("  [profile.dev]");
-    println!("  split-debuginfo = \"unpacked\"   # faster linking on Linux");
+    println!("\nCaching:");
+    if has("sccache", &["--version"]) {
+        println!("  ✓ sccache found — `oryn build --cache` / set RUSTC_WRAPPER=sccache (warm-cache/CI win).");
+    } else {
+        println!("  • `cargo install sccache` for a sound cross-run compile cache (best in CI; cold builds are slower).");
+    }
 
     println!("\nDo less work:");
-    println!("  • `oryn build` / `oryn test` build & test only the crates your change affects.");
-    println!("  • split large crates — a crate is the unit of caching AND of oryn's selection.");
+    println!("  • `oryn build`/`oryn test` build & test only the crates your change affects.");
+    println!("  • `oryn build --tests` precompiles test binaries so `oryn test` is run-only.");
+
+    let cfg = tune::cargo_config(&host, os, ver, mold, clang);
+    if apply {
+        let cwd = std::env::current_dir()?;
+        let root = git::repo_root(&cwd).unwrap_or(cwd);
+        let path = root.join(".cargo/config.toml");
+        if path.exists() {
+            println!(
+                "\n`{}` already exists — not overwriting. Add these settings manually:\n\n{}",
+                path.display(),
+                cfg
+            );
+        } else {
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::write(&path, &cfg)?;
+            println!("\n✓ wrote sound defaults to {}", path.display());
+        }
+    } else {
+        println!("\nRun `oryn tune --apply` to write these to .cargo/config.toml:\n\n{cfg}");
+    }
     Ok(())
+}
+
+/// Workspace-hack recommendation from the current workspace's members.
+fn workspace_hack_advice() -> Result<Option<String>> {
+    let cwd = std::env::current_dir()?;
+    let graph = metadata::load(&cwd)?;
+    let names = graph.names(&graph.all_indices());
+    Ok(oryn_core::tune::hakari_advice(&names))
 }
