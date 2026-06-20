@@ -69,15 +69,15 @@ mod tests {
 
     #[test]
     fn crate_with_a_failure_is_not_green() {
-        let crates = vec!["oryn-core".to_string(), "oryn-cli".to_string()];
+        let crates = vec!["oryn-core".to_string(), "oryn".to_string()];
         let outs = vec![
             outcome("oryn-core::graph::tests::ok", true),
             outcome("oryn-core::select::tests::bad", false),
-            outcome("oryn-cli::main::ok", true),
+            outcome("oryn::main::ok", true),
         ];
         let r = attribute_crates(&outs, &crates);
         assert_eq!(r["oryn-core"], Some(false));
-        assert_eq!(r["oryn-cli"], Some(true));
+        assert_eq!(r["oryn"], Some(true));
     }
 
     #[test]

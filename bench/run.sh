@@ -26,7 +26,7 @@ ORYN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ORYN="$ORYN_ROOT/target/release/oryn"
 if [ ! -x "$ORYN" ]; then
   echo "building oryn (release)…" >&2
-  ( cd "$ORYN_ROOT" && cargo build --release -p oryn-cli >/dev/null )
+  ( cd "$ORYN_ROOT" && cargo build --release -p oryn >/dev/null )
 fi
 
 # --- resolve the target workspace ------------------------------------------
