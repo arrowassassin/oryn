@@ -13,6 +13,11 @@
 set -euo pipefail
 
 RUNS="${RUNS:-5}"
+# The cheap oryn-side measurements (cached test, fingerprint) run RUNS times.
+# The expensive `cargo test --workspace` baseline re-runs the FULL suite each
+# time, so it gets its own, smaller count — on a heavy async suite (tokio) 5×
+# full runs is minutes of CI for no extra signal. Override with BASELINE_RUNS.
+BASELINE_RUNS="${BASELINE_RUNS:-2}"
 WITH_FN="${WITH_FN:-0}"
 
 # --- locate the oryn binary (build it if needed) ---------------------------
@@ -79,7 +84,7 @@ log ""
 log "[A] Warm test loop, NO change — sound cache-skip vs full re-run"
 "$ORYN" test --all >/dev/null 2>&1 || true   # seed green
 bench "oryn test --all (all crates cached green)" "$RUNS" -- "$ORYN" test --all
-bench "cargo test --workspace (re-runs all)"      "$RUNS" -- cargo test --workspace
+bench "cargo test --workspace (re-runs all)"      "$BASELINE_RUNS" -- cargo test --workspace
 
 log ""
 log "[B] Fingerprint + selection cost (runs on every oryn invocation)"
