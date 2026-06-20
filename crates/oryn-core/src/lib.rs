@@ -21,6 +21,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bayes;
+pub mod bisect;
 pub mod dashboard;
 pub mod error;
 pub mod fingerprint;

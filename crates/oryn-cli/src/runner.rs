@@ -73,8 +73,32 @@ pub fn affected(since: Option<&str>, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Apply sccache as the compile cache to a cargo invocation, if requested and
+/// available. A missing-but-requested cache is a warning, not an error.
+fn apply_cache(cmd: &mut Command, requested: bool) {
+    if !requested {
+        return;
+    }
+    if has("sccache", &["--version"]) {
+        cmd.env("RUSTC_WRAPPER", "sccache");
+        // Make artifacts path-independent so the cache is portable & reproducible.
+        cmd.env("CARGO_INCREMENTAL", "0");
+        eprintln!("oryn: compile cache ON (RUSTC_WRAPPER=sccache)");
+    } else {
+        eprintln!(
+            "oryn: --cache requested but sccache not found; run `oryn tune` for install steps"
+        );
+    }
+}
+
 /// `oryn test`
-pub fn test(since: Option<&str>, all: bool, no_cache: bool, extra: &[String]) -> Result<()> {
+pub fn test(
+    since: Option<&str>,
+    all: bool,
+    no_cache: bool,
+    cache: bool,
+    extra: &[String],
+) -> Result<()> {
     let (graph, _root, plan) = context(since)?;
     let cands = candidates(&graph, &plan, all);
     if cands.is_empty() {
@@ -113,9 +137,9 @@ pub fn test(since: Option<&str>, all: bool, no_cache: bool, extra: &[String]) ->
     let use_nextest = has("cargo", &["nextest", "--version"]) && nextest_profile(&graph.root);
 
     let status = if use_nextest {
-        run_tests_nextest(&graph, &to_run, &fps, &mut st, now, extra)?
+        run_tests_nextest(&graph, &to_run, &fps, &mut st, now, cache, extra)?
     } else {
-        run_tests_cargo(&to_run, &fps, &mut st, now, extra)?
+        run_tests_cargo(&to_run, &fps, &mut st, now, cache, extra)?
     };
 
     st.save(&store_dir).context("saving oryn store")?;
@@ -156,12 +180,14 @@ fn record_green(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_tests_nextest(
     graph: &WorkspaceGraph,
     to_run: &[String],
     fps: &std::collections::BTreeMap<String, String>,
     st: &mut Store,
     now: u64,
+    cache: bool,
     extra: &[String],
 ) -> Result<i32> {
     let mut cmd = Command::new("cargo");
@@ -170,6 +196,7 @@ fn run_tests_nextest(
         cmd.args(["-p", c]);
     }
     cmd.args(extra);
+    apply_cache(&mut cmd, cache);
     let status = cmd.status().context("running cargo nextest")?;
 
     let junit = graph.root.join("target/nextest/oryn/junit.xml");
@@ -196,6 +223,7 @@ fn run_tests_cargo(
     fps: &std::collections::BTreeMap<String, String>,
     st: &mut Store,
     now: u64,
+    cache: bool,
     extra: &[String],
 ) -> Result<i32> {
     let mut cmd = Command::new("cargo");
@@ -204,6 +232,7 @@ fn run_tests_cargo(
         cmd.args(["-p", c]);
     }
     cmd.args(extra);
+    apply_cache(&mut cmd, cache);
     let status = cmd.status().context("running cargo test")?;
     // Aggregate result: we cannot attribute per crate, so be conservative —
     // mark green only if the whole run passed; otherwise forget green.
@@ -215,7 +244,7 @@ fn run_tests_cargo(
 }
 
 /// `oryn build`
-pub fn build(since: Option<&str>, all: bool, extra: &[String]) -> Result<()> {
+pub fn build(since: Option<&str>, all: bool, cache: bool, extra: &[String]) -> Result<()> {
     let (graph, _root, plan) = context(since)?;
     let cands = candidates(&graph, &plan, all);
     if cands.is_empty() {
@@ -233,8 +262,24 @@ pub fn build(since: Option<&str>, all: bool, extra: &[String]) -> Result<()> {
         cmd.args(["-p", c]);
     }
     cmd.args(extra);
+    apply_cache(&mut cmd, cache);
     let status = cmd.status().context("running cargo build")?;
     std::process::exit(status.code().unwrap_or(1));
+}
+
+/// `oryn cache` — show sccache statistics, the correct shared compile cache.
+pub fn cache_stats() -> Result<()> {
+    if !has("sccache", &["--version"]) {
+        println!("sccache not found. It is the correct, battle-tested shared compile cache.");
+        println!("Install:  cargo install sccache");
+        println!("Use:      oryn build --cache   (or set RUSTC_WRAPPER=sccache)");
+        return Ok(());
+    }
+    let status = Command::new("sccache")
+        .arg("--show-stats")
+        .status()
+        .context("running sccache --show-stats")?;
+    std::process::exit(status.code().unwrap_or(0));
 }
 
 /// `oryn flaky`

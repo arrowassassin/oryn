@@ -43,6 +43,9 @@ enum Cmd {
         /// Ignore the green-result cache and re-run everything selected.
         #[arg(long)]
         no_cache: bool,
+        /// Use sccache as the compile cache (RUSTC_WRAPPER) if available.
+        #[arg(long)]
+        cache: bool,
         /// Extra args passed through to the test runner (after `--`).
         #[arg(last = true)]
         extra: Vec<String>,
@@ -55,6 +58,9 @@ enum Cmd {
         /// Build the whole workspace regardless of the diff.
         #[arg(long)]
         all: bool,
+        /// Use sccache as the compile cache (RUSTC_WRAPPER) if available.
+        #[arg(long)]
+        cache: bool,
         /// Extra args passed through to cargo (after `--`).
         #[arg(last = true)]
         extra: Vec<String>,
@@ -94,6 +100,8 @@ enum Cmd {
     Setup,
     /// Detect proven compile-time speedups that aren't enabled here.
     Tune,
+    /// Show the sccache compile-cache statistics (hits/misses).
+    Cache,
     /// Show version and detected tooling.
     Info,
 }
@@ -106,9 +114,15 @@ fn main() -> Result<()> {
             since,
             all,
             no_cache,
+            cache,
             extra,
-        } => runner::test(since.as_deref(), all, no_cache, &extra),
-        Cmd::Build { since, all, extra } => runner::build(since.as_deref(), all, &extra),
+        } => runner::test(since.as_deref(), all, no_cache, cache, &extra),
+        Cmd::Build {
+            since,
+            all,
+            cache,
+            extra,
+        } => runner::build(since.as_deref(), all, cache, &extra),
         Cmd::Flaky { input, level, json } => runner::flaky(input.as_deref(), level, json),
         Cmd::Budget {
             fail_rate,
@@ -128,6 +142,7 @@ fn main() -> Result<()> {
         Cmd::Tui { since, level } => tui::run(since.as_deref(), level),
         Cmd::Setup => runner::setup(),
         Cmd::Tune => runner::tune(),
+        Cmd::Cache => runner::cache_stats(),
         Cmd::Info => {
             println!("oryn      {}", oryn_core::VERSION);
             println!(
