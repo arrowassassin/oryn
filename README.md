@@ -30,16 +30,26 @@ Speed and correctness pull against each other, so each lever is deliberate:
    full run.
 
    **Function-level selection (`oryn cover` + `oryn test --fn`).** Finer than
-   crate-level and sound on *stable* Rust: `oryn cover` runs each test under
-   `-C instrument-coverage` and records the exact source lines it executes. Then
-   `oryn test --fn` diffs against that base, maps each changed hunk to its
-   enclosing **function** (via `syn` spans of the base revision — so an insertion
-   *inside* a covered function is correctly caught, where naive line-matching
-   would miss it), and runs only the tests whose coverage intersects the impacted
-   lines. Because coverage is a full execution trace, cross-file callee changes
-   are caught too. A change *outside* any function body (a `const`, `type`,
-   `use`) conservatively falls back to the whole crate. *Demonstrated: editing one
-   function selected 3 of 68 tests.*
+   crate-level and sound on *stable* Rust — a **hybrid** of dynamic coverage and
+   static analysis. `oryn cover` runs each test under `-C instrument-coverage` and
+   records the exact source lines it executes. Then `oryn test --fn` diffs against
+   that base and classifies every changed line three ways:
+   - **Inside a function** → mapped to that function's `syn` span (so an insertion
+     *inside* a covered function is caught, where naive line-matching misses it),
+     then intersected with per-test coverage. Because coverage is a full execution
+     trace, cross-file callee changes are caught too.
+   - **Inside a `const`/`static`/`type`** → coverage can't see these
+     non-execution dependencies (a test that reads a `const` never "executes" it),
+     so a crate-wide **static reference graph** (`syn`, over-approximate — it may
+     add spurious edges but never drops a real one) is consulted to select every
+     function that transitively names the changed item.
+   - **Anything else** (struct/enum/trait/impl/macro/mod, or outside every item)
+     → conservatively falls back to the whole crate.
+
+   On top of selection, **flaky tests are always re-run** — a coverage trace is a
+   single execution and can be unsound under nondeterminism, and the flaky
+   subsystem flags exactly those tests. *Demonstrated: editing one function
+   selected 3 of 68 tests; editing a `const` selected only its dependent tests.*
 
 2. **Don't re-run known-green tests (sound result cache).** Oryn computes a
    **Merkle fingerprint** of each crate's entire dependency-closure of sources
@@ -110,7 +120,7 @@ For PRs, use `--since origin/main`.
 
 | Crate | What it is |
 |-------|------------|
-| [`oryn-core`](crates/oryn-core) | The engine. Crate selection (`graph`, `metadata`, `git`, `select`); function-level selection (`coverage`, `difflines`, `fnspans`, `fnselect`); sound result caching (`fingerprint`, `store`, `runner`); test collection (`junit`); the statistical framework (`stats` Wilson/bootstrap, `bayes` Beta-Binomial, `flaky`, `prioritize`, `bisect`); and the render-agnostic `dashboard`. Pure, deterministic, exhaustively unit-tested. |
+| [`oryn-core`](crates/oryn-core) | The engine. Crate selection (`graph`, `metadata`, `git`, `select`); hybrid function-level selection (`coverage`, `difflines`, `fnspans`, `fnselect`, `refgraph` static reference graph, `hybrid` dynamic+static analyzer); sound result caching (`fingerprint`, `store`, `runner`); test collection (`junit`); the statistical framework (`stats` Wilson/bootstrap, `bayes` Beta-Binomial, `flaky`, `prioritize`, `bisect`); and the render-agnostic `dashboard`. Pure, deterministic, exhaustively unit-tested. |
 | [`oryn-cli`](crates/oryn-cli) | The `oryn` binary — orchestration over cargo/nextest/git/sccache/llvm-cov, and the ratatui `tui`. |
 
 ## Soundness notes
@@ -128,8 +138,12 @@ For PRs, use `--since origin/main`.
 - **Merge-queue batching** built on the `bisect` primitive.
 
 > On function-level selection: rather than a nightly MIR rustc driver (the
-> RustyRTS approach, version-locked and fragile), Oryn implements **dynamic,
-> coverage-based** function-level RTS, which is sound on stable Rust today.
+> RustyRTS approach, version-locked and fragile), Oryn implements a **hybrid**
+> RTS that is sound on stable Rust today — dynamic coverage for function-body
+> changes, a static `syn` reference graph for the non-execution dependencies
+> coverage can't see (`const`/`static`/`type`), and an always-run-flaky rule to
+> cover nondeterminism. This recovers most of static MIR's soundness without
+> the nightly toolchain lock-in.
 
 ## License
 

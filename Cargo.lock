@@ -480,6 +480,7 @@ dependencies = [
  "blake3",
  "proc-macro2",
  "quick-xml",
+ "quote",
  "rand",
  "rand_chacha",
  "serde",

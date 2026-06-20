@@ -14,7 +14,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use oryn_core::fnselect::{self, TestCoverage};
-use oryn_core::fnspans::{self, FileImpact};
+use oryn_core::hybrid::{self, HybridImpact};
 use oryn_core::store::{self, Store};
 use oryn_core::{coverage, difflines, git, metadata, select};
 
@@ -220,20 +220,6 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
         let crate_dir = &graph.members[idx].manifest_dir;
         let crate_rel = relativize(&crate_dir.to_string_lossy(), &root).unwrap_or_default();
 
-        // Per-file impact for this crate's changed files.
-        let mut impacts: BTreeMap<String, FileImpact> = BTreeMap::new();
-        for (file, hs) in &hunks {
-            if !file.starts_with(&crate_rel) {
-                continue;
-            }
-            let old_src = git_show(&root, &base, file);
-            let imp = match old_src {
-                Some(src) => fnspans::impact(&src, hs),
-                None => FileImpact::Whole, // new/removed file — be safe
-            };
-            impacts.insert(file.clone(), imp);
-        }
-
         // Universe of this crate's tests (current).
         let bins = test_binaries(&cwd, crate_name, false)?;
         let mut names = Vec::new();
@@ -248,9 +234,35 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
             .filter_map(|id| st.coverage.get(id).map(|c| (id.clone(), c.clone())))
             .collect();
 
-        let sel = fnselect::select(&impacts, &coverage, &ids);
-        let to_run_names: Vec<String> = sel
-            .run
+        // Hybrid impact: coverage for function-body changes + the static
+        // reference graph for const/static/type changes.
+        let crate_hunks: BTreeMap<String, Vec<difflines::Hunk>> = hunks
+            .iter()
+            .filter(|(f, _)| f.starts_with(&crate_rel))
+            .map(|(f, h)| (f.clone(), h.clone()))
+            .collect();
+        let base_files = crate_base_files(&cwd, &base, &crate_rel)?;
+        let run_ids: Vec<String> = match hybrid::analyze(&base_files, &crate_hunks) {
+            HybridImpact::WholeCrate => {
+                eprintln!("oryn fn: {crate_name} — non-localizable change, running whole crate");
+                ids.clone()
+            }
+            HybridImpact::PerFile(impacts) => fnselect::select(&impacts, &coverage, &ids).run,
+        };
+
+        // Always rerun flaky tests — coverage is one execution and can be unsound
+        // under nondeterminism; the flaky subsystem flags exactly these.
+        let mut run_set: std::collections::BTreeSet<String> = run_ids.into_iter().collect();
+        for id in &ids {
+            if st
+                .tests
+                .get(id)
+                .is_some_and(|r| r.passes > 0 && r.fails > 0)
+            {
+                run_set.insert(id.clone());
+            }
+        }
+        let to_run_names: Vec<String> = run_set
             .iter()
             .filter_map(|id| {
                 id.strip_prefix(&format!("{crate_name}::"))
@@ -297,6 +309,25 @@ pub fn test_fn(extra: &[String]) -> Result<()> {
         println!("oryn fn: all impacted tests passed ✓");
     }
     Ok(())
+}
+
+/// All `.rs` source files of a crate at the base revision, as `(rel, source)`.
+fn crate_base_files(dir: &Path, base: &str, crate_rel: &str) -> Result<Vec<(String, String)>> {
+    let out = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", base, "--", crate_rel])
+        .current_dir(dir)
+        .output()?;
+    let mut files = Vec::new();
+    if out.status.success() {
+        for path in String::from_utf8_lossy(&out.stdout).lines() {
+            if path.ends_with(".rs") {
+                if let Some(src) = git_show(dir, base, path) {
+                    files.push((path.to_string(), src));
+                }
+            }
+        }
+    }
+    Ok(files)
 }
 
 fn git_show(dir: &Path, base: &str, file: &str) -> Option<String> {
