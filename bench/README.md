@@ -31,9 +31,11 @@ edits-then-reverts tracked files. Results are also written to `$BENCH_OUT`
 ## In CI
 
 `.github/workflows/benchmark.yml` runs this on demand (Actions → *benchmark* →
-*Run workflow*) against any repo URL, with `mold`, `clang`, and
-`llvm-tools-preview` installed so the linker and coverage levers are measurable.
-Results land in the run summary and a `bench-results` artifact.
+*Run workflow*), with `mold`, `clang`, and `llvm-tools-preview` installed so the
+linker and coverage levers are measurable. With no input it benchmarks a matrix
+of repos (ripgrep + tokio, `fail-fast: false`); pass a `repo` URL to benchmark
+just that one. Each repo's results land in the run summary and a `bench-<name>`
+artifact.
 
 ## Reference numbers (ripgrep, 10 crates, 1,139 tests, 4-core CI-class box)
 

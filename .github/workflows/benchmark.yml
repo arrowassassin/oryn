@@ -1,22 +1,47 @@
 name: benchmark
 
-# Manual, on-demand benchmark of oryn against a real Cargo workspace.
-# Run it from the Actions tab ("Run workflow"); pick any repo URL.
+# Manual, on-demand benchmark of oryn against real Cargo workspaces.
+# Run from the Actions tab ("Run workflow"). With no `repo` input it benchmarks
+# a default matrix of repos; pass a `repo` URL to benchmark just that one.
 on:
   workflow_dispatch:
     inputs:
       repo:
-        description: "Git URL of a Cargo workspace to benchmark"
+        description: "Optional single Cargo workspace URL (overrides the matrix)"
         required: false
-        default: "https://github.com/BurntSushi/ripgrep"
+        default: ""
       with_fn:
         description: "Also benchmark coverage + --fn (slow)"
         type: boolean
         default: false
 
 jobs:
-  bench:
+  setup:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - id: gen
+        env:
+          REPO: ${{ inputs.repo }}
+        run: |
+          if [ -n "$REPO" ]; then
+            matrix=$(jq -nc --arg u "$REPO" '{include:[{name:"custom",url:$u}]}')
+          else
+            matrix='{"include":[
+              {"name":"ripgrep","url":"https://github.com/BurntSushi/ripgrep"},
+              {"name":"tokio","url":"https://github.com/tokio-rs/tokio"}
+            ]}'
+          fi
+          # collapse whitespace and emit
+          echo "matrix=$(echo "$matrix" | tr -d '\n ' )" >> "$GITHUB_OUTPUT"
+
+  bench:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,12 +55,12 @@ jobs:
       - name: Build oryn (release)
         run: cargo build --release -p oryn-cli
 
-      - name: Clone the target workspace
-        run: git clone --depth 1 "${{ inputs.repo }}" /tmp/target
+      - name: Clone target (${{ matrix.name }})
+        run: git clone --depth 1 "${{ matrix.url }}" /tmp/target
 
-      - name: Run benchmark
+      - name: Run benchmark (${{ matrix.name }})
         env:
-          BENCH_OUT: ${{ github.workspace }}/bench-results.txt
+          BENCH_OUT: ${{ github.workspace }}/bench-${{ matrix.name }}.txt
           WITH_FN: ${{ inputs.with_fn && '1' || '0' }}
         run: bash bench/run.sh /tmp/target
 
@@ -43,13 +68,14 @@ jobs:
         if: always()
         run: |
           {
+            echo "### ${{ matrix.name }}"
             echo '```'
-            cat bench-results.txt
+            cat "bench-${{ matrix.name }}.txt" 2>/dev/null || echo "(no results — see job log)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bench-results
-          path: bench-results.txt
+          name: bench-${{ matrix.name }}
+          path: bench-${{ matrix.name }}.txt
